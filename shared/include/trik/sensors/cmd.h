@@ -1,0 +1,26 @@
+#ifndef TRIK_SENSORS_CMD_H_
+#define TRIK_SENSORS_CMD_H_
+
+#if defined(__cplusplus)
+extern "C" {
+#endif
+
+#define TRIK_CMD_MASK 0xFF000000
+
+enum trik_cmd {
+  TRIK_CMD_NOP = 0x00000000,
+  TRIK_CMD_INIT = 0x01000000,
+  TRIK_CMD_STEP = 0x02000000,
+  TRIK_CMD_EDGE_LINE_SENSOR = 0x03000000,
+  TRIK_CMD_LINE_SENSOR = 0x04000000,
+  TRIK_CMD_MOTION_SENSOR = 0x05000000,
+  TRIK_CMD_MXN_SENSOR = 0x06000000,
+  TRIK_CMD_OBJECT_SENSOR = 0x07000000,
+  TRIK_CMD_SHUTDOWN = 0xA0000000,
+};
+
+#if defined(__cplusplus)
+}
+#endif
+
+#endif
