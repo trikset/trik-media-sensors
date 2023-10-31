@@ -10,6 +10,6 @@ Building
   After installation configure `products.mak` with proper paths.
   Also, TI library IMGlib is used, but it's included in the repository to avoid some of the headache with building.
 2. Run `make` 
-  It'll build ARM and DSP part of the software both for debug and release in `./arm/bin` and `./dsp/bin' directories.
+  It'll build ARM and DSP part of the software both for debug and release in `./arm/bin` and `./dsp/bin` directories.
 
 
