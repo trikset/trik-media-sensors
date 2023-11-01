@@ -256,6 +256,8 @@ static int trik_read_cv_algorithm_in_args_from_file(char* filename, struct trik_
       in_args->detect_val_from = value;
     else if (strcmp(param, "detect_val_to") == 0)
       in_args->detect_val_to = value;
+    else if (strcmp(param, "auto_detect_hsv") == 0)
+      in_args->auto_detect_hsv = value;
 
   fclose(f);
   return 0;
