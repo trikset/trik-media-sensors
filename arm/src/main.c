@@ -26,13 +26,15 @@ static enum trik_cv_algorithm trik_cv_algorithm_from_string(char* string) {
     return TRIK_CV_ALGORITHM_EDGE_LINE_SENSOR;
   else if (strcmp(string, "object_sensor") == 0)
     return TRIK_CV_ALGORITHM_OBJECT_SENSOR;
+  else if (strcmp(string, "line_sensor") == 0)
+    return TRIK_CV_ALGORITHM_LINE_SENSOR;
   else
     return TRIK_CV_ALGORITHM_NONE;
 }
 
 static void usage(void) {
   printf("usage: trik-media-sensors [-h] [-d dev_name] [-c config_path] algorithm\n");
-  printf("possible algorithms: motion_sensor, edge_line_sensor, object_sensor\n");
+  printf("possible algorithms: motion_sensor, edge_line_sensor, object_sensor, line_sensor\n");
 }
 
 int main(int argc, char* argv[]) {

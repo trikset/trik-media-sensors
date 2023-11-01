@@ -72,6 +72,7 @@ protected:
 }
 
 #include "edge_line_sensor.hpp"
+#include "line_sensor.hpp"
 #include "motion_sensor.hpp"
 #include "object_sensor.hpp"
 
