@@ -40,6 +40,8 @@ static enum trik_cmd trik_cmd_from_cv_algorithm(enum trik_cv_algorithm cv_algori
     return TRIK_CMD_LINE_SENSOR;
   else if (cv_algorithm == TRIK_CV_ALGORITHM_OBJECT_SENSOR)
     return TRIK_CMD_OBJECT_SENSOR;
+  else if (cv_algorithm == TRIK_CV_ALGORITHM_MXN_SENSOR)
+    return TRIK_CMD_MXN_SENSOR;
   else
     return TRIK_CMD_NOP;
 }
@@ -258,6 +260,10 @@ static int trik_read_cv_algorithm_in_args_from_file(char* filename, struct trik_
       in_args->detect_val_to = value;
     else if (strcmp(param, "auto_detect_hsv") == 0)
       in_args->auto_detect_hsv = value;
+    else if (strcmp(param, "width_n") == 0)
+      in_args->width_n = value;
+    else if (strcmp(param, "height_n") == 0)
+      in_args->height_n = value;
 
   fclose(f);
   return 0;

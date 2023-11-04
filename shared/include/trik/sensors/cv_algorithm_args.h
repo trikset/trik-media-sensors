@@ -18,6 +18,8 @@ struct trik_cv_algorithm_in_args {
   uint8_t detect_val_from;  // [0..100]
   uint8_t detect_val_to;    // [0..100]
   bool auto_detect_hsv;     // [true|false]
+  uint16_t width_n;         // [1..320]
+  uint16_t height_n;        // [1..240]
 };
 
 struct trik_cv_algorithm_out_target {
