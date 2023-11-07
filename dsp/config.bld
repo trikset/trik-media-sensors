@@ -50,7 +50,7 @@ Build.platformTable["ti.platforms.evmOMAPL138:dsp"] = {
     stackMemory: "DDR",
     l1DMode: "32k",
     l1PMode: "32k",
-    l2Mode: "32k"
+    l2Mode: "128k"
 };
 
 

@@ -67,7 +67,7 @@ LDFLAGS = -w -q -u _c_int00 -c -m $(@D)/obj/$(@F).map
 LDLIBS = -l $(CGTOOLS)/lib/libc.a -l ./lib/imglib.ae64P #-l./lib/common.ae674 -l./lib/vlib.ae674 -l./lib/vlib_cn.ae674 #--export=__c6xabi_divi --export=__c6xabi_remi
 
 CCPROFILE_debug = -D_DEBUG_=1 --symdebug:dwarf
-CCPROFILE_release = -O2 --sat_reassoc=on --optimizer_interlist --debug_software_pipeline --c_src_interlist --gen_opt_info=2 --advice:performance=all -DNDEBUG=1 --auto_inline --speculate_loads=16 --opt_for_speed=5 --call_assumptions=3 --no_bad_aliases --no_reload_errors --gen_func_subsections
+CCPROFILE_release = -O3 --optimizer_interlist --debug_software_pipeline --c_src_interlist --gen_opt_info=2 --advice:performance=all -DNDEBUG=1 --auto_inline --speculate_loads=16 --opt_for_speed=5 --call_assumptions=3 --no_bad_aliases --no_reload_errors --gen_func_subsections
 
 #  ======== standard macros ========
 ifneq (,$(wildcard $(XDC_INSTALL_DIR)/xdc.exe))
