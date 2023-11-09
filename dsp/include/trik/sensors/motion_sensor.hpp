@@ -27,18 +27,6 @@ namespace sensors {
 #define CAMERA_NOISE_S16 0x0A00     /* SQ12.3 */
 #define THRESHOLD_FACTOR_S16 0x31ff /* SQ4.11 */
 
-static int16_t runningMean[320 * 240];
-
-static int16_t runningVar[320 * 240];
-
-static const short s_coeff[5] = { 0x2000, 0x2BDD, -0x0AC5, -0x1658, 0x3770 };
-// static const uint8_t s_minBlobArea = 625;
-static const uint8_t s_connected8Flag = 1;
-
-static uint16_t s_harrisScore[320 * 240];
-static int8_t s_corners[320 * 240];
-static uint8_t s_buffer[200];
-
 class MotionSensorCvAlgorithm : public CvAlgorithm<VideoFormat::YUV422, VideoFormat::RGB565X> {
 private:
   uint64_t m_detectRange;
@@ -48,68 +36,6 @@ private:
   int32_t m_targetX;
   int32_t m_targetY;
   uint32_t m_targetPoints;
-
-  ImageDesc m_inImageDesc;
-  ImageDesc m_outImageDesc;
-
-  uint16_t m_mult43_div[(1u << 8)];
-  uint16_t m_mult255_div[(1u << 8)];
-
-  static void __attribute__((always_inline)) writeOutputPixel(uint16_t* restrict _rgb565ptr, const uint32_t _rgb888) {
-    //*_rgb565ptr = ((_rgb888>>19)&0x001f) | ((_rgb888>>5)&0x07e0) | ((_rgb888<<8)&0xf800);
-    *_rgb565ptr = ((_rgb888 >> 3) & 0x001f) | ((_rgb888 >> 5) & 0x07e0) | ((_rgb888 >> 8) & 0xf800);
-  }
-
-  void __attribute__((always_inline)) drawOutputPixelBound(const int32_t _srcCol, const int32_t _srcRow, const int32_t _srcColBot, const int32_t _srcColTop,
-    const int32_t _srcRowBot, const int32_t _srcRowTop, const ImageBuffer& _outImage, const uint32_t _rgb888) const {
-    const int32_t srcCol = range<int32_t>(_srcColBot, _srcCol, _srcColTop);
-    const int32_t srcRow = range<int32_t>(_srcRowBot, _srcRow, _srcRowTop);
-
-    const int32_t dstRow = srcRow >> m_srcToDstShift;
-    const int32_t dstCol = srcCol >> m_srcToDstShift;
-
-    const uint32_t dstOfs = dstRow * m_outImageDesc.m_lineLength + dstCol * sizeof(uint16_t);
-    writeOutputPixel(reinterpret_cast<uint16_t*>(_outImage.m_ptr + dstOfs), _rgb888);
-  }
-
-  void __attribute__((always_inline))
-  drawOutputCircle(const int32_t _srcCol, const int32_t _srcRow, const int32_t _srcRadius, const ImageBuffer& _outImage, const uint32_t _rgb888) const {
-    const int32_t widthBot = 0;
-    const int32_t widthTop = m_inImageDesc.m_width - 1;
-    const int32_t heightBot = 0;
-    const int32_t heightTop = m_inImageDesc.m_height - 1;
-
-    int32_t circleError = 1 - _srcRadius;
-    int32_t circleErrorY = 1;
-    int32_t circleErrorX = -2 * _srcRadius;
-    int32_t circleX = _srcRadius;
-    int32_t circleY = 0;
-
-    drawOutputPixelBound(_srcCol, _srcRow + _srcRadius, widthBot, widthTop, heightBot, heightTop, _outImage, _rgb888);
-    drawOutputPixelBound(_srcCol, _srcRow - _srcRadius, widthBot, widthTop, heightBot, heightTop, _outImage, _rgb888);
-    drawOutputPixelBound(_srcCol + _srcRadius, _srcRow, widthBot, widthTop, heightBot, heightTop, _outImage, _rgb888);
-    drawOutputPixelBound(_srcCol - _srcRadius, _srcRow, widthBot, widthTop, heightBot, heightTop, _outImage, _rgb888);
-
-    while (circleY < circleX) {
-      if (circleError >= 0) {
-        circleX -= 1;
-        circleErrorX += 2;
-        circleError += circleErrorX;
-      }
-      circleY += 1;
-      circleErrorY += 2;
-      circleError += circleErrorY;
-
-      drawOutputPixelBound(_srcCol + circleX, _srcRow + circleY, widthBot, widthTop, heightBot, heightTop, _outImage, _rgb888);
-      drawOutputPixelBound(_srcCol + circleX, _srcRow - circleY, widthBot, widthTop, heightBot, heightTop, _outImage, _rgb888);
-      drawOutputPixelBound(_srcCol - circleX, _srcRow + circleY, widthBot, widthTop, heightBot, heightTop, _outImage, _rgb888);
-      drawOutputPixelBound(_srcCol - circleX, _srcRow - circleY, widthBot, widthTop, heightBot, heightTop, _outImage, _rgb888);
-      drawOutputPixelBound(_srcCol + circleY, _srcRow + circleX, widthBot, widthTop, heightBot, heightTop, _outImage, _rgb888);
-      drawOutputPixelBound(_srcCol + circleY, _srcRow - circleX, widthBot, widthTop, heightBot, heightTop, _outImage, _rgb888);
-      drawOutputPixelBound(_srcCol - circleY, _srcRow + circleX, widthBot, widthTop, heightBot, heightTop, _outImage, _rgb888);
-      drawOutputPixelBound(_srcCol - circleY, _srcRow - circleX, widthBot, widthTop, heightBot, heightTop, _outImage, _rgb888);
-    }
-  }
 
   bool testifyRgbPixel(const uint32_t _rgb888, uint32_t& _out_rgb888) const {
     const uint32_t u32_rgb_or16 = _unpkhu4(_rgb888);
@@ -125,10 +51,10 @@ private:
     const uint32_t u32_rgb_delta = u32_rgb_max - u32_rgb_min;
 
     /* optimized by table based multiplication with power-2 divisor, simulate 255*(max-min)/max */
-    const uint32_t u32_hsv_sat_x256 = m_mult255_div[u32_rgb_max] * u32_rgb_delta;
+    const uint32_t u32_hsv_sat_x256 = s_mult255_div[u32_rgb_max] * u32_rgb_delta;
 
     /* optimized by table based multiplication with power-2 divisor, simulate 43*(med-min)/(max-min) */
-    const uint32_t u32_hsv_hue_mult43_div = _pack2(m_mult43_div[u32_rgb_delta], m_mult43_div[u32_rgb_delta]);
+    const uint32_t u32_hsv_hue_mult43_div = _pack2(s_mult43_div[u32_rgb_delta], s_mult43_div[u32_rgb_delta]);
     int32_t s32_hsv_hue_x256;
     const uint32_t u32_rgb_cmp = _cmpeq2(u32_rgb_max_max, u32_rgb_gb16);
     if (u32_rgb_cmp == 0)
@@ -191,23 +117,8 @@ private:
 
 public:
   virtual bool setup(const ImageDesc& _inImageDesc, const ImageDesc& _outImageDesc, int8_t* _fastRam, size_t _fastRamSize) {
-    m_inImageDesc = _inImageDesc;
-    m_outImageDesc = _outImageDesc;
-
-    if (m_inImageDesc.m_width % 32 != 0 || m_inImageDesc.m_height % 4 != 0)
+    if (!commonSetup(_inImageDesc, _outImageDesc, _fastRam, _fastRamSize))
       return false;
-
-    for (m_srcToDstShift = 0; m_srcToDstShift < 32; ++m_srcToDstShift)
-      if ((m_inImageDesc.m_width >> m_srcToDstShift) <= m_outImageDesc.m_width && (m_inImageDesc.m_height >> m_srcToDstShift) <= m_outImageDesc.m_height)
-        break;
-
-    m_mult43_div[0] = 0;
-    m_mult255_div[0] = 0;
-    for (uint32_t idx = 1; idx < (1u << 8); ++idx) {
-      m_mult43_div[idx] = (43u * (1u << 8)) / idx;
-      m_mult255_div[idx] = (255u * (1u << 8)) / idx;
-    }
-
     return true;
   }
 
@@ -228,7 +139,6 @@ public:
     uint32_t detectSatTo = range<int32_t>(0, (static_cast<int32_t>(_inArgs.detect_sat_to) * 255) / 100, 255);     // scaling 0..100 to 0..255
     uint32_t detectValFrom = range<int32_t>(0, (static_cast<int32_t>(_inArgs.detect_val_from) * 255) / 100, 255); // scaling 0..100 to 0..255
     uint32_t detectValTo = range<int32_t>(0, (static_cast<int32_t>(_inArgs.detect_val_to) * 255) / 100, 255);     // scaling 0..100 to 0..255
-    Log_print6(Diags_INFO, "%d %d %d %d %d %d", detectHueFrom, detectHueTo, detectSatFrom, detectSatTo, detectValFrom, detectValTo);
 
     if (detectHueFrom <= detectHueTo) {
       m_detectRange = _itoll((detectValFrom << 16) | (detectSatFrom << 8) | detectHueFrom, (detectValTo << 16) | (detectSatTo << 8) | detectHueTo);

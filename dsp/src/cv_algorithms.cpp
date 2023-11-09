@@ -26,9 +26,9 @@ extern "C" int trik_init_cv_algorithm(enum trik_cv_algorithm algorithm) {
     .m_format = VideoFormat::RGB565X,
   };
   if (algorithm == TRIK_CV_ALGORITHM_MOTION_SENSOR)
-    return motionSensorCvAlgorithm.setup(inDesc, outDesc, NULL, NULL);
+    return motionSensorCvAlgorithm.setup(inDesc, outDesc, fastRam, sizeof(fastRam) / sizeof(fastRam[0]));
   else if (algorithm == TRIK_CV_ALGORITHM_EDGE_LINE_SENSOR)
-    return edgeLineSensorCvAlgorithm.setup(inDesc, outDesc, NULL, NULL);
+    return edgeLineSensorCvAlgorithm.setup(inDesc, outDesc, fastRam, sizeof(fastRam) / sizeof(fastRam[0]));
   else if (algorithm == TRIK_CV_ALGORITHM_OBJECT_SENSOR)
     return objectSensorCvAlgorithm.setup(inDesc, outDesc, fastRam, sizeof(fastRam) / sizeof(fastRam[0]));
   else if (algorithm == TRIK_CV_ALGORITHM_LINE_SENSOR)

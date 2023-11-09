@@ -23,8 +23,8 @@
 #include <trik/sensors/cv_algorithms.h>
 #include <trik/sensors/msg.h>
 
-int8_t __attribute__((aligned(64))) out_buff[BUFFER_SIZE];
-int8_t __attribute__((aligned(64))) in_buff[BUFFER_SIZE];
+int8_t __attribute__((aligned(128))) out_buff[BUFFER_SIZE];
+int8_t __attribute__((aligned(128))) in_buff[BUFFER_SIZE];
 
 typedef struct {
   UInt16 hostProcId;

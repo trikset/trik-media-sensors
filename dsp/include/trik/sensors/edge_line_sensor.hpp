@@ -80,55 +80,6 @@ private:
   int32_t m_targetY;
   uint32_t m_targetPoints;
 
-  ImageDesc m_inImageDesc;
-  ImageDesc m_outImageDesc;
-
-  static void __attribute__((always_inline)) writeOutputPixel(uint16_t* restrict _rgb565ptr, const uint32_t _rgb888) {
-    *_rgb565ptr = ((_rgb888 >> 3) & 0x001f) | ((_rgb888 >> 5) & 0x07e0) | ((_rgb888 >> 8) & 0xf800);
-  }
-
-  void __attribute__((always_inline)) drawOutputPixelBound(const int32_t _srcCol, const int32_t _srcRow, const int32_t _srcColBot, const int32_t _srcColTop,
-    const int32_t _srcRowBot, const int32_t _srcRowTop, const ImageBuffer& _outImage, const uint32_t _rgb888) const {
-    const int32_t srcCol = range<int32_t>(_srcColBot, _srcCol, _srcColTop);
-    const int32_t srcRow = range<int32_t>(_srcRowBot, _srcRow, _srcRowTop);
-
-    const int32_t dstRow = s_hi2ho[srcRow];
-    const int32_t dstCol = s_wi2wo[srcCol];
-
-    const uint32_t dstOfs = dstRow * m_outImageDesc.m_lineLength + dstCol * sizeof(uint16_t);
-    writeOutputPixel(reinterpret_cast<uint16_t*>(_outImage.m_ptr + dstOfs), _rgb888);
-  }
-
-  void __attribute__((always_inline))
-  drawRgbTargetCenterLine(const int32_t _srcCol, const int32_t _srcRow, const ImageBuffer& _outImage, const uint32_t _rgb888) {
-    const int32_t widthBot = 0;
-    const int32_t widthTop = m_inImageDesc.m_width - 1;
-    const int32_t heightBot = 0;
-    const int32_t heightTop = m_inImageDesc.m_height - 1;
-
-    for (int adj = 0; adj < 100; ++adj) {
-      drawOutputPixelBound(_srcCol, _srcRow - adj, widthBot, widthTop, heightBot, heightTop, _outImage, _rgb888);
-      drawOutputPixelBound(_srcCol, _srcRow + adj, widthBot, widthTop, heightBot, heightTop, _outImage, _rgb888);
-    }
-  }
-
-  void __attribute__((always_inline)) drawCornerHighlight(const int32_t _srcCol, const int32_t _srcRow, const ImageBuffer& _outImage, const uint32_t _rgb888) {
-    const int32_t widthBot = 0;
-    const int32_t widthTop = m_inImageDesc.m_width - 1;
-    const int32_t heightBot = 0;
-    const int32_t heightTop = m_inImageDesc.m_height - 1;
-
-    drawOutputPixelBound(_srcCol - 1, _srcRow - 1, widthBot, widthTop, heightBot, heightTop, _outImage, _rgb888);
-    drawOutputPixelBound(_srcCol - 1, _srcRow, widthBot, widthTop, heightBot, heightTop, _outImage, _rgb888);
-    drawOutputPixelBound(_srcCol - 1, _srcRow + 1, widthBot, widthTop, heightBot, heightTop, _outImage, _rgb888);
-    drawOutputPixelBound(_srcCol, _srcRow - 1, widthBot, widthTop, heightBot, heightTop, _outImage, _rgb888);
-    drawOutputPixelBound(_srcCol, _srcRow, widthBot, widthTop, heightBot, heightTop, _outImage, _rgb888);
-    drawOutputPixelBound(_srcCol, _srcRow + 1, widthBot, widthTop, heightBot, heightTop, _outImage, _rgb888);
-    drawOutputPixelBound(_srcCol + 1, _srcRow - 1, widthBot, widthTop, heightBot, heightTop, _outImage, _rgb888);
-    drawOutputPixelBound(_srcCol + 1, _srcRow, widthBot, widthTop, heightBot, heightTop, _outImage, _rgb888);
-    drawOutputPixelBound(_srcCol + 1, _srcRow + 1, widthBot, widthTop, heightBot, heightTop, _outImage, _rgb888);
-  }
-
   void convertImageYuyvToRgb(const ImageBuffer& _inImage, ImageBuffer& _outImage) {
     const uint32_t width = m_inImageDesc.m_width;
     const uint32_t height = m_inImageDesc.m_height;
@@ -272,28 +223,8 @@ private:
 
 public:
   virtual bool setup(const ImageDesc& _inImageDesc, const ImageDesc& _outImageDesc, int8_t* _fastRam, size_t _fastRamSize) {
-    m_inImageDesc = _inImageDesc;
-    m_outImageDesc = _outImageDesc;
-
-    if (m_inImageDesc.m_width % 32 != 0 || m_inImageDesc.m_height % 4 != 0)
+    if (!commonSetup(_inImageDesc, _outImageDesc, _fastRam, _fastRamSize))
       return false;
-
-#define min(x, y) x < y ? x : y;
-    // const double srcToDstShift = min(static_cast<double>(m_outImageDesc.m_width)/m_inImageDesc.m_width,
-    //                                  static_cast<double>(m_outImageDesc.m_height)/m_inImageDesc.m_height);
-
-    const uint32_t widthIn = _inImageDesc.m_width;
-    uint32_t* restrict p_wi2wo = s_wi2wo;
-#pragma MUST_ITERATE(32, , 32)
-    for (int i = 0; i < widthIn; i++)
-      *(p_wi2wo++) = i /**srcToDstShift*/;
-
-    const uint32_t heightIn = _inImageDesc.m_height;
-    uint32_t* restrict p_hi2ho = s_hi2ho;
-#pragma MUST_ITERATE(32, , 32)
-    for (uint32_t i = 0; i < heightIn; i++)
-      *(p_hi2ho++) = i /*srcToDstShift*/;
-
     return true;
   }
 

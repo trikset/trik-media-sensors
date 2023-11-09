@@ -36,7 +36,7 @@ typedef struct Target {
 
 static inline bool compareTargetBySize(const Target& a, const Target& b) { return a.size > b.size; }
 
-class ClusterizerCvAlgorithm : public CvAlgorithm<VideoFormat::Unknown, VideoFormat::Unknown> {
+class ClusterizerCvAlgorithm : public CvAlgorithm<VideoFormat::YUV422, VideoFormat::RGB565X> {
 private:
   ImageDesc m_inImageDesc;
   ImageDesc m_outImageDesc;
@@ -132,6 +132,7 @@ public:
 
   uint16_t getClustersAmount() {
     int amount = 0;
+#pragma MUST_ITERATE(2, , 2)
     for (int i = 0; i < equalClusters.size(); i++)
       if (clusters[i].size > 0)
         amount++;

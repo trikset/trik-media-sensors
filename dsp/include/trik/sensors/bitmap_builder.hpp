@@ -22,7 +22,7 @@ namespace sensors {
 static uint16_t s_hi2ho_bb[IMG_WIDTH];
 static uint8_t s_metapixFillerShifter_bb[IMG_WIDTH];
 
-class BitmapBuilderCvAlgorithm : public CvAlgorithm<VideoFormat::Unknown, VideoFormat::Unknown> {
+class BitmapBuilderCvAlgorithm : public CvAlgorithm<VideoFormat::YUV422, VideoFormat::RGB565X> {
 private:
   union U_Hsv8x3 {
     struct {
