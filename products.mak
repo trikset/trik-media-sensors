@@ -30,14 +30,41 @@
 #  EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #
 
-# Path to TI SDK depot
-DEPOT = 
-# Path to TI C6000 compiler
-ti.targets.elf.C674 = 
-# Board kernel installation directory
-KERNEL_INSTALL_DIR = 
+ifndef TI_DEPOT
+$(warning TI_DEPOT is not set)
+$(warning You can download TI processor SDK for RTOS OMAPL138 from "https://www.ti.com/tool/PROCESSOR-SDK-OMAPL138" (recommended version 06.03.00.106, authorization required))
+endif
 
-# You probably don't need the following variables...
+ifndef TI_C6000
+$(warning TI_C6000 is not set)
+$(warning You can download TI C6000 compiler from "https://www.ti.com/tool/C6000-CGT" (authorization required))
+endif
+
+ifndef KERNEL_INSTALL
+$(warning Kernel install dir is not set)
+$(warning Specify a path to the trik's kernel artifacts (try the path "build/tmp-glibc/work-shared/trikboard/kernel-build-artifacts" in setup-scripts))
+endif
+
+ifndef TI_DEPOT
+$(error not all required env variables are set)
+endif
+
+ifndef TI_C6000
+$(error not all required env variables are set)
+endif
+
+ifndef KERNEL_INSTALL
+$(error not all required env variables are set)
+endif
+
+
+# Path to TI SDK depot
+DEPOT = $(TI_DEPOT)
+# Path to TI C6000 compiler
+ti.targets.elf.C674 = $(TI_C6000)
+# Board kernel installation directory
+KERNEL_INSTALL_DIR = $(KERNEL_INSTALL)
+
 PLATFORM = OMAPL138
 
 TOOLCHAIN_LONGNAME = arm-unknown-linux-gnueabi
