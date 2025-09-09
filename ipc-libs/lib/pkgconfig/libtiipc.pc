@@ -1,0 +1,11 @@
+prefix=/home/daniel/trik/texas-tools/ipc_3_50_04_08/ipc-libs
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib
+includedir=${prefix}/include
+
+Name: libtiipc
+Description: TI IPC library
+Version: 3.0.0
+Requires.private: libtiipcutils
+Libs: -L${libdir} -ltiipc
+Cflags: -I${includedir}

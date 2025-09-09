@@ -21,15 +21,19 @@
 #include <ti/ipc/transports/TransportRpmsg.h>
 
 #include <ti/ipc/MultiProc.h>
-
-#include <trik/sensors/camera.h>
+#include <trik/buffer.h>
 #include <trik/sensors/cmd.h>
 #include <trik/sensors/cv_algorithm.h>
 #include <trik/sensors/log.h>
 #include <trik/sensors/msg.h>
+#include <trik/sensors/runtime.h>
+#include <trik/sensors/thread_input.h>
+#include <trik/sensors/thread_video.h>
+
+#include <time.h>
 
 #define PAGE_SIZE 4096
-#define CAMERA_BUFFER_COUNT 2
+#define CAMERA_BUFFER_COUNT 5
 
 static enum trik_cmd trik_cmd_from_cv_algorithm(enum trik_cv_algorithm cv_algorithm) {
   if (cv_algorithm == TRIK_CV_ALGORITHM_MOTION_SENSOR)
@@ -66,9 +70,10 @@ static int trik_init_rpmsg(uint16_t rproc_id) {
   Module.slaveQue = MessageQ_INVALIDMESSAGEQ;
   Module.heapId = TRIK_MSG_HEAP_ID;
   Module.msgSize = TRIK_MSG_SIZE /* sizeof(struct trik_msg) */;
+  printf("MessageQ_Params_init\n");
 
   MessageQ_Params_init(&msgqParams);
-
+  printf("MessageQ_create\n");
   Module.hostQue = MessageQ_create(TRIK_HOST_MSG_QUE_NAME, &msgqParams);
 
   if (Module.hostQue == NULL) {
@@ -133,7 +138,6 @@ static int trik_send_cmd(enum trik_cmd cmd) {
 static int trik_wait_for_msg(struct trik_msg** msg) {
   if (MessageQ_get(Module.hostQue, (MessageQ_Msg*) msg, MessageQ_FOREVER) < 0)
     return -1;
-
   debugf("got 0x%x", (*msg)->cmd);
   return 0;
 }
@@ -145,12 +149,10 @@ static int trik_destroy_msg(void* msg) {
 
 static int trik_wait_for_cmd(enum trik_cmd cmd) {
   struct trik_msg* msg;
-
   if (trik_wait_for_msg(&msg) < 0)
     return -1;
   if (msg->cmd != cmd)
     return -1;
-
   trik_destroy_msg(msg);
   return 0;
 }
@@ -163,7 +165,8 @@ static int trik_fill_pipeline() {
 }
 
 static int trik_drain_pipeline() {
-  for (int i = 0; i < 3; i++)
+  int count = MessageQ_count(Module.hostQue);
+  for (int i = 0; i < count; i++)
     if (trik_wait_for_cmd(TRIK_CMD_NOP) < 0)
       return -1;
   return 0;
@@ -208,14 +211,12 @@ cleanup:
   return retval;
 }
 
-static int trik_req_cv_algorithm(enum trik_cv_algorithm cv_algorithm, struct trik_cv_algorithm_in_args in_args) {
+static int trik_req_cv_algorithm(enum trik_cv_algorithm cv_algorithm) {
   enum trik_cmd cmd = trik_cmd_from_cv_algorithm(cv_algorithm);
   if (cmd == TRIK_CMD_NOP)
     return -1;
 
   struct trik_req_cv_algorithm_msg* req = (struct trik_req_cv_algorithm_msg*) trik_create_msg(cmd);
-
-  req->in_args = in_args;
 
   if (trik_send_msg((struct trik_msg*) req) < 0)
     return -1;
@@ -225,11 +226,16 @@ static int trik_req_cv_algorithm(enum trik_cv_algorithm cv_algorithm, struct tri
   return 0;
 }
 
-static int trik_req_step(struct trik_cv_algorithm_out_args* out_args) {
-  if (trik_send_cmd(TRIK_CMD_STEP) < 0)
+int trik_req_step(struct trik_cv_algorithm_out_args* out_args, struct trik_cv_algorithm_in_args in_args) {
+  struct trik_req_cv_algorithm_msg* req = (struct trik_req_cv_algorithm_msg*) trik_create_msg(TRIK_CMD_STEP);
+  // if (trik_send_cmd(TRIK_CMD_STEP) < 0)
+  //   return -1;
+  req->in_args = in_args;
+
+  if (trik_send_msg((struct trik_msg*) req) < 0)
     return -1;
 
-  struct trik_res_step_msg* res;
+  struct trik_req_cv_algorithm_msg* res;
   if (trik_wait_for_msg((struct trik_msg**) &res) < 0)
     return -1;
 
@@ -239,8 +245,12 @@ static int trik_req_step(struct trik_cv_algorithm_out_args* out_args) {
   return 0;
 }
 
-static int trik_read_cv_algorithm_in_args_from_file(char* filename, struct trik_cv_algorithm_in_args* in_args) {
+static int trik_read_cv_algorithm_in_args_from_file(const char* filename, struct trik_cv_algorithm_in_args* in_args) {
   FILE* f = fopen(filename, "r");
+
+  if (f == NULL) {
+    return -1;
+  } 
 
   char param[32];
   int32_t value;
@@ -269,7 +279,7 @@ static int trik_read_cv_algorithm_in_args_from_file(char* filename, struct trik_
   return 0;
 }
 
-static int trik_setup_display(int8_t** fbp) {
+static int trik_setup_display(int8_t** fbp, unsigned int* fb_len) {
   int fbfd = 0;
   struct fb_var_screeninfo vinfo;
   struct fb_fix_screeninfo finfo;
@@ -294,7 +304,7 @@ static int trik_setup_display(int8_t** fbp) {
   }
 
   screensize = vinfo.xres * vinfo.yres * vinfo.bits_per_pixel / 8;
-
+  *fb_len = finfo.smem_len;
   *fbp = (int8_t*) mmap(0, screensize, PROT_READ | PROT_WRITE, MAP_SHARED, fbfd, 0);
   return 0;
 }
@@ -313,79 +323,51 @@ int trik_destroy_arm_server(void) {
   if (trik_destroy_rpmsg() < 0)
     warnf("failed disabling rpmsg");
 
-  if (trik_destroy_camera() < 0)
-    warnf("failed disabling the camera");
-
   debugf("destroyed arm server");
   return 0;
 }
 
-int trik_start_arm_server(enum trik_cv_algorithm cv_algorithm, char* dev_name, char* config_filename) {
+void* trik_start_arm_server(void* _arg) {
+  int res = 0;
+  intptr_t exit_code = 0;
+  Runtime* runtime = (Runtime*) _arg;
   debugf("starting arm server");
-
-  // I don't know, why it is obsolete, but found it in examples...
-  // Decided to leave it as is.
-  if (trik_fill_pipeline() < 0) {
-    errorf("failed to fill pipeline");
-    return -1;
-  }
 
   struct buffer dsp_in_buf;
   struct buffer dsp_out_buf;
-  struct trik_cv_algorithm_in_args in_args;
-
-  if (trik_read_cv_algorithm_in_args_from_file(config_filename, &in_args) < 0)
-    warnf("failed to read config from '%s', using fallback", config_filename);
-  else
-    debugf("sucessfully loaded config file '%s'", config_filename);
-
-  if (trik_req_init(&dsp_in_buf, &dsp_out_buf) < 0) {
-    errorf("failed to recieve image buffer");
-    return -1;
+  if (runtime->m_config.m_configFile) {
+    if (trik_read_cv_algorithm_in_args_from_file(runtime->m_config.m_configFile, &(runtime->m_state.m_targetDetectParams)) < 0)
+      warnf("failed to read config from '%s', using fallback", runtime->m_config.m_configFile);
+    else
+      debugf("sucessfully loaded config file '%s'", runtime->m_config.m_configFile);
+  }
+  if ((res = trik_req_init(&dsp_in_buf, &dsp_out_buf)) < 0) {
+    errorf("failed to recieve image buffer %d", res);
+    exit_code = res;
+    goto destroy_arm_server;
   }
   debugf("successully recieved image bufs");
+  runtime->m_modules.m_dsp.dsp_in_buf = &dsp_in_buf;
+  runtime->m_modules.m_dsp.dsp_out_buf = &dsp_out_buf;
 
-  if (trik_init_camera(CAMERA_BUFFER_COUNT, dev_name) < 0) {
-    errorf("failed to initialize camera (not sure ov7620 or webcam)");
-    return -1;
-  }
-  debugf("successully init camera");
-
-  if (trik_req_cv_algorithm(cv_algorithm, in_args) < 0) {
-    errorf("failed to request a cv algorithm");
-    return -1;
+  if ((res = trik_req_cv_algorithm(runtime->m_config.m_rcConfig.m_sensorType)) < 0) {
+    errorf("failed to request a cv algorithm %d", res);
+    exit_code = res;
+    goto destroy_arm_server;
   }
   debugf("successully got cv algorithm");
 
-  int8_t* fbp;
-  if (trik_setup_display(&fbp) < 0)
-    warnf("failed to initialize display");
-  else
-    debugf("successully set up the display");
-
-  while (true) {
-    struct buffer image_buf;
-    if (trik_camera_wait_for_frame(&image_buf) < 0) {
-      errorf("unable to recieve a camera frame");
-      return -1;
-    }
-    memcpy(dsp_in_buf.start, image_buf.start, BUFFER_SIZE);
-
-    struct trik_cv_algorithm_out_args out_args;
-    if (trik_req_step(&out_args) < 0) {
-      errorf("unable to proccess a frame on a DSP");
-      return -1;
-    }
-    if (fbp != NULL)
-      for (uint32_t i = 0; i < IMG_HEIGHT; i++)
-        memcpy(fbp + i * IMG_HEIGHT * 2, dsp_out_buf.start + i * IMG_WIDTH * 2 + (IMG_WIDTH - IMG_HEIGHT), sizeof(int8_t) * IMG_HEIGHT * 2);
-    trik_release_frame();
+  if ((res = threadVideo(runtime)) != 0) {
+    errorf("failed to threadVideo %d", res);
+    exit_code = res;
+    goto destroy_arm_server;
   }
 
-  if (trik_drain_pipeline() < 0) {
-    errorf("failed to drain pipeline");
-    return -1;
+destroy_arm_server:
+  if ((res = trik_destroy_arm_server()) < 0) {
+    errorf("failed to destroy arm server");
+    exit_code = res;
   }
 
-  return 0;
+  return (void*) exit_code;
 }

@@ -10,96 +10,118 @@
 
 #include <ti/ipc/MultiProc.h>
 
+#include "trik/sensors/runtime.h"
+#include <errno.h>
+#include <signal.h>
+#include <sysexits.h>
 #include <trik/sensors/arm_server.h>
-#include <trik/sensors/camera.h>
 #include <trik/sensors/cmd.h>
 #include <trik/sensors/cv_algorithm.h>
 #include <trik/sensors/msg.h>
 
-#define DEFAULT_DEV_NAME "/dev/video0"
-#define DEFAULT_CONFIG_FILENAME "/etc/trik/sensors";
+static sig_atomic_t s_signalTerminate = false;
 
-static enum trik_cv_algorithm trik_cv_algorithm_from_string(char* string) {
-  if (strcmp(string, "motion_sensor") == 0)
-    return TRIK_CV_ALGORITHM_MOTION_SENSOR;
-  else if (strcmp(string, "edge_line_sensor") == 0)
-    return TRIK_CV_ALGORITHM_EDGE_LINE_SENSOR;
-  else if (strcmp(string, "object_sensor") == 0)
-    return TRIK_CV_ALGORITHM_OBJECT_SENSOR;
-  else if (strcmp(string, "line_sensor") == 0)
-    return TRIK_CV_ALGORITHM_LINE_SENSOR;
-  else if (strcmp(string, "mxn_sensor") == 0)
-    return TRIK_CV_ALGORITHM_MXN_SENSOR;
-  else
-    return TRIK_CV_ALGORITHM_NONE;
+static void sigterm_action(int _signal, siginfo_t* _siginfo, void* _context) {
+  (void) _signal;
+  (void) _siginfo;
+  (void) _context;
+  s_signalTerminate = true;
 }
 
-static void usage(void) {
-  printf("usage: trik-media-sensors [-h] [-d dev_name] [-c config_path] algorithm\n");
-  printf("possible algorithms: motion_sensor, edge_line_sensor, object_sensor, line_sensor, mxn_sensor\n");
-}
+static int sigactions_setup() {
+  struct sigaction action;
+  memset(&action, 0, sizeof(action));
+  action.sa_sigaction = &sigterm_action;
+  action.sa_flags = SA_SIGINFO | SA_RESTART;
 
-int main(int argc, char* argv[]) {
-  char* dev_name = DEFAULT_DEV_NAME;
-  char* config_filename = DEFAULT_CONFIG_FILENAME;
-
-  int c;
-  while ((c = getopt(argc, argv, "hd:c:")) != -1) {
-    switch (c) {
-    case 'h':
-      usage();
-      return 0;
-    case 'd':
-      dev_name = optarg;
-      break;
-    case 'c':
-      config_filename = optarg;
-      break;
-    case '?':
-      if (optopt == 'c')
-        fprintf(stderr, "option -%c requires an argument", optopt);
-      return -1;
-    default:
-      abort();
-    }
-  }
-
-  if (optind >= argc) {
-    usage();
+  if (sigaction(SIGTERM, &action, NULL) != 0) {
+    fprintf(stderr, "sigaction(SIGTERM) failed: %d\n", errno);
     return -1;
   }
-  enum trik_cv_algorithm cv_algorithm = trik_cv_algorithm_from_string(argv[optind]);
+  if (sigaction(SIGINT, &action, NULL) != 0) {
+    fprintf(stderr, "sigaction(SIGINT) failed: %d\n", errno);
+    return -1;
+  }
 
-  Ipc_transportConfig(&TransportRpmsg_Factory);
+  signal(SIGPIPE, SIG_IGN);
+  return 0;
+}
 
-  int status = Ipc_start();
-  if (status < 0) {
-    printf("Ipc_start failed: status = %d\n", status);
-    return 0;
+int main(int _argc, char* const _argv[]) {
+  Runtime runtime;
+
+  int res = 0;
+  int exit_code = EX_OK;
+  const char* arg0 = _argv[0];
+
+  runtimeReset(&runtime);
+  if (!runtimeParseArgs(&runtime, _argc, _argv)) {
+    runtimeArgsHelpMessage(&runtime, arg0);
+    exit_code = EX_USAGE;
+    goto exit;
+  }
+
+  if ((res = runtimeInit(&runtime)) != 0) {
+    fprintf(stderr, "runtimeInit() failed: %d\n", res);
+    exit_code = EX_SOFTWARE;
+    goto exit;
+  }
+
+  if ((res = Ipc_transportConfig(&TransportRpmsg_Factory)) != 0) {
+    fprintf(stderr, "Ipc_transportConfig failed: status = %d\n", res);
+    exit_code = EX_SOFTWARE;
+    goto exit;
+  }
+
+  if ((res = Ipc_start()) < 0) {
+    fprintf(stderr, "Ipc_start failed: status = %d\n", res);
+    exit_code = EX_SOFTWARE;
+    goto exit;
   }
 
   uint16_t rproc_id;
 
   rproc_id = MultiProc_getId("DSP");
 
-  if (trik_init_arm_server(rproc_id) < 0) {
-    printf("main(): failed to initialize trik arm server\n");
-    return -1;
+  if ((res = trik_init_arm_server(rproc_id)) < 0) {
+    printf("main(): failed to initialize trik arm server: %d\n", res);
+    exit_code = EX_SOFTWARE;
+    goto exit_ipc_stop;
   }
 
-  if (trik_start_arm_server(cv_algorithm, dev_name, config_filename) < 0) {
-    printf("main(): failed to start trik arm server\n");
-    return -1;
+  if ((res = sigactions_setup()) != 0) {
+    fprintf(stderr, "sigactions_setup failed: %d\n", res);
+    exit_code = EX_SOFTWARE;
+    goto exit_ipc_stop;
   }
 
-  if (trik_destroy_arm_server() < 0) {
-    printf("main(): failed to destroy trik arm server\n");
-    return -1;
+  if ((res = runtimeStart(&runtime)) != 0) {
+    fprintf(stderr, "runtimeStart failed: %d\n", res);
+    exit_code = EX_SOFTWARE;
+    goto exit_ipc_stop;
   }
 
-  Ipc_stop();
+  while (!s_signalTerminate && !runtimeGetTerminate(&runtime)) {
+    sleep(1);
+  }
 
-  printf("<-- main:\n");
+exit_runtime_stop:
+  if ((res = runtimeStop(&runtime)) != 0) {
+    fprintf(stderr, "runtimeStop() failed: %d\n", res);
+    exit_code = EX_SOFTWARE;
+  }
+exit_fini:
+  if ((res = runtimeFini(&runtime)) != 0) {
+    fprintf(stderr, "runtimeStop() failed: %d\n", res);
+    exit_code = EX_SOFTWARE;
+  }
 
-  return 0;
+exit_ipc_stop:
+  if ((res = Ipc_stop()) < 0) {
+    printf("Ipc_stop failed: status = %d\n", res);
+    exit_code = EX_SOFTWARE;
+  }
+
+exit:
+  return exit_code;
 }

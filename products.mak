@@ -57,6 +57,10 @@ ifndef KERNEL_INSTALL
 $(error not all required env variables are set)
 endif
 
+ifndef TRIK_SDK
+$(error not all required env variables are set)
+endif
+
 
 # Path to TI SDK depot
 DEPOT = $(TI_DEPOT)
@@ -65,12 +69,13 @@ ti.targets.elf.C674 = $(TI_C6000)
 # Board kernel installation directory
 KERNEL_INSTALL_DIR = $(KERNEL_INSTALL)
 
+TRIK_SDK_DIR = $(TRIK_SDK)
+
 PLATFORM = OMAPL138
 
-TOOLCHAIN_LONGNAME = arm-unknown-linux-gnueabi
-TOOLCHAIN_INSTALL_DIR = /home/georgiy/x-tools/$(TOOLCHAIN_LONGNAME)
-TOOLCHAIN_PREFIX = $(TOOLCHAIN_INSTALL_DIR)/bin/$(TOOLCHAIN_LONGNAME)-
-
+TOOLCHAIN_LONGNAME     = arm-oe-linux-gnueabi
+TOOLCHAIN_INSTALL_DIR  = $(TRIK_SDK_DIR)/sysroots/x86_64-oesdk-linux/usr
+TOOLCHAIN_PREFIX       = $(TOOLCHAIN_INSTALL_DIR)/bin/$(TOOLCHAIN_LONGNAME)/$(TOOLCHAIN_LONGNAME)-
 
 AF_RPMSG = 
 DRM_PREFIX =

@@ -131,7 +131,6 @@ static int trik_handle_init(struct trik_msg* req) {
 
 static int trik_handle_sensor(struct trik_req_cv_algorithm_msg* req) {
   cv_algorithm = trik_cv_algorithm_from_cmd(req->header.cmd);
-  in_args = req->in_args;
 
   struct trik_msg* res = (struct trik_msg*) req;
 
@@ -150,8 +149,8 @@ static int trik_handle_sensor(struct trik_req_cv_algorithm_msg* req) {
 }
 
 static int trik_handle_step(struct trik_msg* req) {
-  struct trik_res_step_msg* res = (struct trik_res_step_msg*) req;
-
+  struct trik_req_cv_algorithm_msg* res = (struct trik_req_cv_algorithm_msg*) req;
+  in_args = res->in_args;
   if (!trik_run_cv_algorithm(cv_algorithm, in_buffer, out_buffer, in_args, &(res->out_args))) {
     Log_print0(Diags_INFO, "trik_handle_step(): unable to run cv algorithm");
     return -1;

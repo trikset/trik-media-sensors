@@ -30,7 +30,7 @@
 #  EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #
 
-srcs = src/main.c src/camera.c src/arm_server.c
+srcs = src/main.c src/arm_server.c src/module_fb.c src/module_rc.c src/module_v4l2.c src/runtime.c src/thread_input.c src/thread_video.c
 
 EXBASE = ..
 include $(EXBASE)/products.mak
@@ -62,9 +62,10 @@ endif
 CFLAGS = -Iinclude/ -I../shared/include
 CPPFLAGS = -Iinclude/ -I../shared/include
 ifndef LINUX_SYSROOT_DIR
-CC = $(TOOLCHAIN_PREFIX)gcc
+SDKTARGETSYSROOT=$(TRIK_SDK_DIR)/sysroots/arm926ejse-oe-linux-gnueabi
+CC = $(TOOLCHAIN_PREFIX)gcc -marm -mcpu=arm926ej-s --sysroot=$(SDKTARGETSYSROOT)
 AR = $(TOOLCHAIN_PREFIX)ar
-LD = $(TOOLCHAIN_PREFIX)gcc
+LD = $(TOOLCHAIN_PREFIX)gcc --sysroot=$(SDKTARGETSYSROOT)
 LDFLAGS = -L$(IPC_INSTALL_DIR)/linux/src/api/.libs/ \
     -L$(IPC_INSTALL_DIR)/linux/src/utils/.libs \
     -L$(IPC_INSTALL_DIR)/linux/src/transport/.libs

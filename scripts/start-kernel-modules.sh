@@ -10,6 +10,6 @@ fi
 echo "Starting modules...";
 depmod -a
 modprobe remoteproc
-modprobe da8xx_remoteproc da8xx_fw_name=${1:-"server_dsp.xe764"}
+modprobe da8xx_remoteproc da8xx_fw_name=${1:-"server_dsp.xe674"}
 modprobe virtio_rpmsg_bus
 modprobe rpmsg_proto

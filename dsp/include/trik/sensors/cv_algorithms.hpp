@@ -324,17 +324,58 @@ protected:
     return u32_hsv;
   }
 
-  void convertImageYuyvToHsv(const ImageBuffer& _inImage) {
-    uint32_t* restrict src = (uint32_t*) _inImage.m_ptr;
-    uint64_t* restrict dst = s_rgb888hsv;
-#pragma MUST_ITERATE(4, , 4)
-    while ((uint8_t*) src < ((uint8_t*) _inImage.m_ptr) + m_inImageDesc.m_width * m_inImageDesc.m_height * 2) {
-      const uint64_t rgb = convert2xYuyvToRgb888(*src);
-      *dst++ = _itoll(_loll(rgb), convertRgb888ToHsv(_loll(rgb)));
-      *dst++ = _itoll(_hill(rgb), convertRgb888ToHsv(_hill(rgb)));
-      src++;
+  // Code from old media sensors. 
+  // It seems (not exactly) that it is faster by 0.003 seconds, than code below (0.015 vs 0.018), 
+  // check it later in assembler.
+  void convertImageYuyvToHsv(const ImageBuffer& _inImage)
+    {
+      const uint32_t srcImageRowEffectiveSize       = m_inImageDesc.m_width*sizeof(uint16_t);
+      const uint32_t srcImageRowEffectiveToFullSize = m_inImageDesc.m_lineLength - srcImageRowEffectiveSize;
+      const int8_t* restrict srcImageRowY     = _inImage.m_ptr;
+      const int8_t* restrict srcImageToY      = srcImageRowY + m_inImageDesc.m_lineLength*m_inImageDesc.m_height;
+      uint64_t* restrict rgb888hsvptr         = s_rgb888hsv;
+
+      assert(m_inImageDesc.m_height % 4 == 0); // verified in setup
+#pragma MUST_ITERATE(4, ,4)
+      while (srcImageRowY != srcImageToY)
+      {
+        assert(reinterpret_cast<intptr_t>(srcImageRowY) % 8 == 0); // let's pray...
+        const uint64_t* restrict srcImageCol4 = reinterpret_cast<const uint64_t*>(srcImageRowY);
+        srcImageRowY += srcImageRowEffectiveSize;
+
+        assert(m_inImageDesc.m_width % 32 == 0); // verified in setup
+#pragma MUST_ITERATE(32/4, ,32/4)
+        while (reinterpret_cast<const int8_t*>(srcImageCol4) != srcImageRowY)
+        {
+          const uint64_t yuyv2x = *srcImageCol4++;
+          const uint64_t rgb12 = convert2xYuyvToRgb888(_loll(yuyv2x));
+          *rgb888hsvptr++ = _itoll(_loll(rgb12), convertRgb888ToHsv(_loll(rgb12)));
+          *rgb888hsvptr++ = _itoll(_hill(rgb12), convertRgb888ToHsv(_hill(rgb12)));
+
+          const uint64_t rgb34 = convert2xYuyvToRgb888(_hill(yuyv2x));
+          *rgb888hsvptr++ = _itoll(_loll(rgb34), convertRgb888ToHsv(_loll(rgb34)));
+          *rgb888hsvptr++ = _itoll(_hill(rgb34), convertRgb888ToHsv(_hill(rgb34)));
+        }
+
+        srcImageRowY += srcImageRowEffectiveToFullSize;
+      }
     }
-  }
+
+//   void convertImageYuyvToHsv(const ImageBuffer& _inImage) {
+//     const uint64_t* restrict src = reinterpret_cast<const uint64_t*>(_inImage.m_ptr);
+//     uint64_t* restrict dst = s_rgb888hsv;
+// #pragma MUST_ITERATE(32, , 32)
+//     while ((reinterpret_cast<const uint8_t*> (src)) < (reinterpret_cast<const uint8_t*> (src)) + m_inImageDesc.m_width * m_inImageDesc.m_height * 2) {
+//       const uint64_t yuyv2x = *src++;
+//       const uint64_t rgb12 = convert2xYuyvToRgb888(_loll(yuyv2x));
+//       *dst++ = _itoll(_loll(rgb12), convertRgb888ToHsv(_loll(rgb12)));
+//       *dst++ = _itoll(_hill(rgb12), convertRgb888ToHsv(_hill(rgb12)));
+      
+//       const uint64_t rgb34 = convert2xYuyvToRgb888(_hill(yuyv2x));
+//       *dst++ = _itoll(_loll(rgb34), convertRgb888ToHsv(_loll(rgb34)));
+//       *dst++ = _itoll(_hill(rgb34), convertRgb888ToHsv(_hill(rgb34)));
+//     }
+//   }
 
   bool commonSetup(const ImageDesc& _inImageDesc, const ImageDesc& _outImageDesc, int8_t* _fastRam, size_t _fastRamSize) {
     m_inImageDesc = _inImageDesc;

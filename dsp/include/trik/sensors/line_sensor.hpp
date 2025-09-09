@@ -6,7 +6,7 @@
 #endif
 
 #include <trik/sensors/cv_algorithms.hpp>
-
+#include <ti/sysbios/family/c64p/Cache.h>
 #include <c6x.h>
 #include <cassert>
 #include <cmath>
@@ -43,6 +43,14 @@ private:
     uint32_t targetPointsPerRow;
     uint32_t targetPointsCol;
 
+    int32_t sum_targetX = 0;
+    int32_t sum_targetY = 0;
+    uint32_t sum_targetPoints = 0;
+
+    uint32_t local_hStart = m_hStart;
+    uint32_t local_hStop = m_hStop;
+    uint32_t sum_crossPoints = 0;
+
     const uint32_t* restrict p_hi2ho = s_hi2ho;
     assert(m_inImageDesc.m_height % 4 == 0); // verified in setup
 #pragma MUST_ITERATE(4, , 4)
@@ -54,8 +62,8 @@ private:
       targetPointsCol = 0;
       const uint32_t* restrict p_wi2wo = s_wi2wo;
       assert(m_inImageDesc.m_width % 32 == 0); // verified in setup
-#pragma MUST_ITERATE(32, , 32)
-      for (uint32_t srcCol = 0; srcCol < width; ++srcCol) {
+#pragma MUST_ITERATE(16, , 16)
+      for (uint32_t srcCol = 0; srcCol < width;) {
         const uint32_t dstCol = *(p_wi2wo++);
         const uint64_t rgb888hsv = *rgb888hsvptr++;
 
@@ -66,13 +74,28 @@ private:
           targetPointsCol += det ? srcCol : 0;
           writeOutputPixel(dstImageRow + dstCol, det ? 0x00ffff : _hill(rgb888hsv));
         }
+        srcCol++;
+
+        const uint32_t dstCol2 = *(p_wi2wo++);
+        const uint64_t rgb888hsv2 = *rgb888hsvptr++;
+        if (srcCol >= 5 && srcCol <= width - 5) {
+          det = detectHsvPixel(_loll(rgb888hsv2), u64_hsv_range, u32_hsv_expect);
+          targetPointsPerRow += det;
+          targetPointsCol += det ? srcCol : 0;
+          writeOutputPixel(dstImageRow + dstCol2, det ? 0x00ffff : _hill(rgb888hsv2));
+        }
+        srcCol++;
       }
-      m_targetX += targetPointsCol;
-      m_targetY += srcRow * targetPointsPerRow;
-      m_targetPoints += targetPointsPerRow;
-      if (srcRow >= m_hStart && srcRow <= m_hStop)
-        m_crossPoints += targetPointsPerRow;
+      sum_targetX += targetPointsCol;
+      sum_targetY += srcRow * targetPointsPerRow;
+      sum_targetPoints += targetPointsPerRow;
+      if (srcRow >= local_hStart && srcRow <= local_hStop)
+        sum_crossPoints += targetPointsPerRow;
     }
+    m_targetX = sum_targetX;
+    m_targetY = sum_targetY;
+    m_targetPoints = sum_targetPoints;
+    m_crossPoints = sum_crossPoints;
   }
 
 public:
@@ -167,6 +190,7 @@ public:
       _outArgs.targets[0].y = crossSize;
       _outArgs.targets[0].size = static_cast<uint32_t>(m_targetPoints * 100 * m_imageScaleCoeff) / inImagePixels;
     }
+    Cache_wbInv(_outImage.m_ptr, _outImage.m_size, Cache_Type_ALL, TRUE);
 
     return true;
   }

@@ -11,8 +11,8 @@ extern "C" {
 int trik_init_arm_server(uint16_t rproc_id);
 int trik_destroy_arm_server(void);
 
-int trik_start_arm_server(enum trik_cv_algorithm cv_algorithm, char* dev_name, char* config_filename);
-
+void* trik_start_arm_server(void* _arg);
+int trik_req_step(struct trik_cv_algorithm_out_args* out_args, struct trik_cv_algorithm_in_args in_args);
 #ifdef __cplusplus
 }
 #endif

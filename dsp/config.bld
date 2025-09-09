@@ -41,7 +41,7 @@ Build.platformTable["ti.platforms.evmOMAPL138:dsp"] = {
     externalMemoryMap: [
         [ "DDR", {
             name: "DDR", space: "code/data", access: "RWX",
-            base: 0xC3100000, len: 0x800000,
+            base: 0xC4000000, len: 0x1000000,
             comment: "DSP Program Memory (8 MB)"
         }]
     ],

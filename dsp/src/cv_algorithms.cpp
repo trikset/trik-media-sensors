@@ -21,9 +21,9 @@ extern "C" int trik_init_cv_algorithm(enum trik_cv_algorithm algorithm) {
     .m_format = VideoFormat::YUV422,
   };
   ImageDesc outDesc = {
-    .m_width = IMG_WIDTH,
-    .m_height = IMG_HEIGHT,
-    .m_lineLength = IMG_WIDTH * 2,
+    .m_width = IMG_HEIGHT,
+    .m_height = IMG_WIDTH,
+    .m_lineLength = IMG_HEIGHT * 2,
     .m_format = VideoFormat::RGB565X,
   };
   if (algorithm == TRIK_CV_ALGORITHM_MOTION_SENSOR)
