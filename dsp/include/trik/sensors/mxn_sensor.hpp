@@ -282,8 +282,8 @@ public:
       return false;
     _outImage.m_size = m_outImageDesc.m_height * m_outImageDesc.m_lineLength;
 
-    m_heightM = _inArgs.height_n;
-    m_widthN = _inArgs.width_n;
+    m_heightM = _inArgs.extra_inArgs.mxnParams.m_m;
+    m_widthN = _inArgs.extra_inArgs.mxnParams.m_n;
     m_widthStep = m_inImageDesc.m_width / m_widthN;
     m_heightStep = m_inImageDesc.m_height / m_heightM;
 
@@ -292,7 +292,7 @@ public:
 #endif
 
       if (m_inImageDesc.m_height > 0 && m_inImageDesc.m_width > 0) {
-        convertImageYuyvToHsv(_inImage);
+        (this->*convertImageFormatToHSV)(_inImage);
         proceedImageHsv(_outImage);
       }
 
@@ -310,11 +310,13 @@ public:
       for (int j = 0; j < m_widthN; ++j) {
         resColor = GetImgColor2(rowStart, colStart, m_heightStep, m_widthStep);
         fillImage(rowStart, colStart, _outImage, resColor);
-        //_outArgs.outColor[counter++] = resColor;
+        _outArgs.targets[0].out_target.targetColors.m_colors[counter++] = resColor;
         colStart += m_widthStep;
       }
       rowStart += m_heightStep;
     }
+
+    Cache_wbInv(_outImage.m_ptr, _outImage.m_size, Cache_Type_ALL, TRUE);
 
     return true;
   }

@@ -45,6 +45,10 @@ typedef struct RuntimeState {
   trik_cv_algorithm_in_args m_targetDetectParams;
   TargetDetectCommand m_targetDetectCommand;
   bool m_videoOutEnable;
+
+  union {
+    MxnParams   m_mxnParams;
+  } extra_runtimeState;
 } RuntimeState;
 
 typedef struct Runtime {
@@ -79,12 +83,15 @@ int runtimeGetTargetDetectParams(Runtime* _runtime, trik_cv_algorithm_in_args* _
 int runtimeSetTargetDetectParams(Runtime* _runtime, const trik_cv_algorithm_in_args* _targetDetectParams);
 int runtimeFetchTargetDetectCommand(Runtime* _runtime, TargetDetectCommand* _targetDetectCommand);
 int runtimeSetTargetDetectCommand(Runtime* _runtime, const TargetDetectCommand* _targetDetectCommand);
+int runtimeSetMxNParams(Runtime* _runtime, MxnParams* mxnParams);
 
 int runtimeGetVideoOutParams(Runtime* _runtime, bool* _videoOutEnable);
 int runtimeSetVideoOutParams(Runtime* _runtime, const bool* _videoOutEnable);
 
-int runtimeReportTargetLocation(Runtime* _runtime, const trik_cv_algorithm_out_target* _targetLocation);
-int runtimeReportTargetDetectParams(Runtime* _runtime, const trik_cv_algorithm_in_args* _targetDetectParams);
+int runtimeReportTargetLocation(Runtime* _runtime, const TargetLocation* _targetLocation);
+int runtimeReportTargetColors(Runtime* _runtime, const TargetColors* _targetColors);
+int runtimeGetMxnParams(Runtime* _runtime, MxnParams* _mxnParams);
+int runtimeReportTargetDetectParams(Runtime* _runtime, const trik_cv_algorithm_out_args* _targetDetectParams);
 
 #ifdef __cplusplus
 } // extern "C"

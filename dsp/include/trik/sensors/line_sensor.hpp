@@ -6,11 +6,11 @@
 #endif
 
 #include <trik/sensors/cv_algorithms.hpp>
-#include <ti/sysbios/family/c64p/Cache.h>
 #include <c6x.h>
 #include <cassert>
 #include <cmath>
-
+#include <xdc/runtime/Diags.h>
+#include <xdc/runtime/Log.h>
 #include "hsv_range_detector.hpp"
 
 namespace trik {
@@ -118,14 +118,15 @@ public:
 
     m_inImageFirstRow = m_inImageDesc.m_height - m_inImageDesc.m_height / m_imageScaleCoeff;
 
-    uint32_t detectHueFrom = range<int32_t>(0, (static_cast<int32_t>(_inArgs.detect_hue_from) * 255) / 359, 255); // scaling 0..359 to 0..255
-    uint32_t detectHueTo = range<int32_t>(0, (static_cast<int32_t>(_inArgs.detect_hue_to) * 255) / 359, 255);     // scaling 0..359 to 0..255
-    uint32_t detectSatFrom = range<int32_t>(0, (static_cast<int32_t>(_inArgs.detect_sat_from) * 255) / 100, 255); // scaling 0..100 to 0..255
-    uint32_t detectSatTo = range<int32_t>(0, (static_cast<int32_t>(_inArgs.detect_sat_to) * 255) / 100, 255);     // scaling 0..100 to 0..255
+    // So far, we are only interested in the black line.
+    uint32_t detectHueFrom = 0; // range<int32_t>(0, (static_cast<int32_t>(detectHueFrom) * 255) / 359, 255); // scaling 0..359 to 0..255
+    uint32_t detectHueTo = 255; // range<int32_t>(0, (static_cast<int32_t>(detectHueTo) * 255) / 359, 255);     // scaling 0..359 to 0..255
+    uint32_t detectSatFrom = 0; // range<int32_t>(0, (static_cast<int32_t>(detectSatFrom) * 255) / 100, 255); // scaling 0..100 to 0..255
+    uint32_t detectSatTo =  255;// range<int32_t>(0, (static_cast<int32_t>(detectSatTo) * 255) / 100, 255);     // scaling 0..100 to 0..255
 
     uint32_t detectValFrom = range<int32_t>(0, (static_cast<int32_t>(_inArgs.detect_val_from) * 255) / 100, 255); // scaling 0..100 to 0..255
     uint32_t detectValTo = range<int32_t>(0, (static_cast<int32_t>(_inArgs.detect_val_to) * 255) / 100, 255);     // scaling 0..100 to 0..255
-    bool autoDetectHsv = static_cast<bool>(_inArgs.auto_detect_hsv);                                              // true or false
+    bool autoDetectHsv = static_cast<bool>(_inArgs.auto_detect_hsv); // true or false
 
     if (detectHueFrom <= detectHueTo) {
       m_detectRange = _itoll((detectValFrom << 16) | (detectSatFrom << 8) | detectHueFrom, (detectValTo << 16) | (detectSatTo << 8) | detectHueTo);
@@ -146,7 +147,7 @@ public:
 #endif
 
       if (m_inImageDesc.m_height > 0 && m_inImageDesc.m_width > 0) {
-        convertImageYuyvToHsv(_inImage);
+        (this->*convertImageFormatToHSV)(_inImage);
 
         if (autoDetectHsv) {
           HsvRangeDetector rangeDetector = HsvRangeDetector(m_inImageDesc.m_width, m_inImageDesc.m_height, step);
@@ -174,9 +175,9 @@ public:
     drawRgbHorizontalLine(0, m_hStart, _outImage, 0xff0000);
     drawRgbHorizontalLine(0, m_hStop, _outImage, 0xff0000);
 
-    _outArgs.targets[0].x = 0;
-    _outArgs.targets[0].y = 0;
-    _outArgs.targets[0].size = 0;
+    _outArgs.targets[0].out_target.targetLocation.x = 0;
+    _outArgs.targets[0].out_target.targetLocation.y = 0;
+    _outArgs.targets[0].out_target.targetLocation.size = 0;
 
     if (m_targetPoints > 10) {
       const int32_t inImagePixels = m_inImageDesc.m_height * m_inImageDesc.m_width;
@@ -186,9 +187,9 @@ public:
 
       drawRgbTargetCenterLine(targetX, hHeight, _outImage, 0xff0000);
 
-      _outArgs.targets[0].x = ((targetX - static_cast<int32_t>(m_inImageDesc.m_width) / 2) * 100 * 2) / static_cast<int32_t>(m_inImageDesc.m_width);
-      _outArgs.targets[0].y = crossSize;
-      _outArgs.targets[0].size = static_cast<uint32_t>(m_targetPoints * 100 * m_imageScaleCoeff) / inImagePixels;
+      _outArgs.targets[0].out_target.targetLocation.x = ((targetX - static_cast<int32_t>(m_inImageDesc.m_width) / 2) * 100 * 2) / static_cast<int32_t>(m_inImageDesc.m_width);
+      _outArgs.targets[0].out_target.targetLocation.y = crossSize;
+      _outArgs.targets[0].out_target.targetLocation.size = static_cast<uint32_t>(m_targetPoints * 100 * m_imageScaleCoeff) / inImagePixels;
     }
     Cache_wbInv(_outImage.m_ptr, _outImage.m_size, Cache_Type_ALL, TRUE);
 

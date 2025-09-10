@@ -29,6 +29,7 @@
 #include <trik/sensors/runtime.h>
 #include <trik/sensors/thread_input.h>
 #include <trik/sensors/thread_video.h>
+#include <trik/sensors/video_format.h>
 
 #include <time.h>
 
@@ -211,12 +212,30 @@ cleanup:
   return retval;
 }
 
-static int trik_req_cv_algorithm(enum trik_cv_algorithm cv_algorithm) {
-  enum trik_cmd cmd = trik_cmd_from_cv_algorithm(cv_algorithm);
+static enum VideoFormat trik_get_video_format(uint32_t video_format) {
+  if (video_format == V4L2_PIX_FMT_YUYV)
+    return YUV422;
+  else if (video_format == V4L2_PIX_FMT_NV16)
+    return NV16;
+  else
+    return Unknown;
+}
+
+
+int trik_req_cv_algorithm(RuntimeConfig r_config, uint32_t line_length) {
+  enum trik_cmd cmd = trik_cmd_from_cv_algorithm(r_config.m_rcConfig.m_sensorType);
   if (cmd == TRIK_CMD_NOP)
     return -1;
 
   struct trik_req_cv_algorithm_msg* req = (struct trik_req_cv_algorithm_msg*) trik_create_msg(cmd);
+
+  req->video_format = trik_get_video_format(r_config.m_v4l2Config.m_format);
+  req->line_length = line_length;
+
+  if (!req->video_format) {
+    errorf("unknown video format, check if we support formats other than yuyv422 and nv16");
+    return -1;
+  }
 
   if (trik_send_msg((struct trik_msg*) req) < 0)
     return -1;
@@ -227,7 +246,7 @@ static int trik_req_cv_algorithm(enum trik_cv_algorithm cv_algorithm) {
 }
 
 int trik_req_step(struct trik_cv_algorithm_out_args* out_args, struct trik_cv_algorithm_in_args in_args) {
-  struct trik_req_cv_algorithm_msg* req = (struct trik_req_cv_algorithm_msg*) trik_create_msg(TRIK_CMD_STEP);
+  struct trik_res_step_msg* req = (struct trik_res_step_msg*) trik_create_msg(TRIK_CMD_STEP);
   // if (trik_send_cmd(TRIK_CMD_STEP) < 0)
   //   return -1;
   req->in_args = in_args;
@@ -235,7 +254,7 @@ int trik_req_step(struct trik_cv_algorithm_out_args* out_args, struct trik_cv_al
   if (trik_send_msg((struct trik_msg*) req) < 0)
     return -1;
 
-  struct trik_req_cv_algorithm_msg* res;
+  struct trik_res_step_msg* res;
   if (trik_wait_for_msg((struct trik_msg**) &res) < 0)
     return -1;
 
@@ -270,10 +289,10 @@ static int trik_read_cv_algorithm_in_args_from_file(const char* filename, struct
       in_args->detect_val_to = value;
     else if (strcmp(param, "auto_detect_hsv") == 0)
       in_args->auto_detect_hsv = value;
-    else if (strcmp(param, "width_n") == 0)
-      in_args->width_n = value;
+    else if (strcmp(param, "width_m") == 0)
+      in_args->extra_inArgs.mxnParams.m_m = value;
     else if (strcmp(param, "height_n") == 0)
-      in_args->height_n = value;
+      in_args->extra_inArgs.mxnParams.m_n = value;
 
   fclose(f);
   return 0;
@@ -349,13 +368,6 @@ void* trik_start_arm_server(void* _arg) {
   debugf("successully recieved image bufs");
   runtime->m_modules.m_dsp.dsp_in_buf = &dsp_in_buf;
   runtime->m_modules.m_dsp.dsp_out_buf = &dsp_out_buf;
-
-  if ((res = trik_req_cv_algorithm(runtime->m_config.m_rcConfig.m_sensorType)) < 0) {
-    errorf("failed to request a cv algorithm %d", res);
-    exit_code = res;
-    goto destroy_arm_server;
-  }
-  debugf("successully got cv algorithm");
 
   if ((res = threadVideo(runtime)) != 0) {
     errorf("failed to threadVideo %d", res);

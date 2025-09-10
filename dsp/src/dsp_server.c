@@ -35,7 +35,6 @@ Registry_Desc Registry_CURDESC;
 static Server_Module Module;
 
 static enum trik_cv_algorithm cv_algorithm = TRIK_CV_ALGORITHM_NONE;
-static struct trik_cv_algorithm_in_args in_args;
 
 static struct buffer in_buffer;
 static struct buffer out_buffer;
@@ -134,7 +133,7 @@ static int trik_handle_sensor(struct trik_req_cv_algorithm_msg* req) {
 
   struct trik_msg* res = (struct trik_msg*) req;
 
-  if (!trik_init_cv_algorithm(cv_algorithm)) {
+  if (!trik_init_cv_algorithm(cv_algorithm, req->video_format, req->line_length)) {
     Log_print1(Diags_INFO, "trik_handle_sensor(): unable to initialize cv algorithm %x", cv_algorithm);
     return -1;
   }
@@ -149,9 +148,9 @@ static int trik_handle_sensor(struct trik_req_cv_algorithm_msg* req) {
 }
 
 static int trik_handle_step(struct trik_msg* req) {
-  struct trik_req_cv_algorithm_msg* res = (struct trik_req_cv_algorithm_msg*) req;
-  in_args = res->in_args;
-  if (!trik_run_cv_algorithm(cv_algorithm, in_buffer, out_buffer, in_args, &(res->out_args))) {
+  struct trik_res_step_msg* res = (struct trik_res_step_msg*) req;
+
+  if (!trik_run_cv_algorithm(cv_algorithm, in_buffer, out_buffer, res->in_args, &(res->out_args))) {
     Log_print0(Diags_INFO, "trik_handle_step(): unable to run cv algorithm");
     return -1;
   }

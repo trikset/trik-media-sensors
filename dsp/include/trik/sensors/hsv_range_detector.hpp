@@ -67,14 +67,13 @@ typedef union U_Hsv8x3 {
   uint32_t whole;
 } U_Hsv8x3;
 
-static const int cstrs_max = 256;  // 256/1
-static const int cstrs_max_ = 255; //
-static const int pos_shift = 0;    // 1 == 2^0
-
-static int32_t s_hsvClusters[cstrs_max];
-
 class HsvRangeDetector {
 private:
+  static const int cstrs_max = 256;  // 256/1
+  static const int cstrs_max_ = 255; //
+  static const int pos_shift = 0;    // 1 == 2^0
+
+  static int32_t s_hsvClusters[cstrs_max];
   ImageData m_image;
   Roi m_roi;
   Cluster m_maxFillCluster;
@@ -177,7 +176,7 @@ private:
 public:
   HsvRangeDetector(int _imgWidth, int _imgHeight, int _detectZoneScale) { initImg(_imgWidth, _imgHeight, _detectZoneScale); }
 
-  void detect(uint16_t& _h, uint16_t& _hTol, uint8_t& _s, uint8_t& _sTol, uint8_t& _v, uint8_t& _vTol, uint64_t* _rgb888hsv) {
+  void detect(uint16_t& _hFrom, uint16_t& _hTo, uint8_t& _sFrom, uint8_t& _sTo, uint8_t& _vFrom, uint8_t& _vTo, uint64_t* _rgb888hsv) {
     // initialize stuff
     srand(time(NULL));
 
@@ -273,15 +272,20 @@ public:
           _s = (C.s1 + C.s0) / 2;
           _sTol = (C.s1 - C.s0) / 2;
     */
-    _h = 0;
-    _hTol = 0;
-    _s = 0;
-    _sTol = 0;
+    _hFrom = 0;
+    _hTo = 0;
+    _sFrom = 0;
+    _sTo = 0;
 
-    _v = (C.v1 + C.v0) / 2;
-    _vTol = (C.v1 - C.v0) / 2;
+    uint8_t _v = (C.v1 + C.v0) / 2;
+    uint8_t _vTol = (C.v1 - C.v0) / 2;
+
+    _vFrom = makeValueRange(_v, -_vTol, 0, 100);
+    _vTo = makeValueRange(_v, +_vTol, 0, 100);
   }
 };
+
+int32_t restrict HsvRangeDetector::s_hsvClusters[HsvRangeDetector::cstrs_max];
 
 }
 }

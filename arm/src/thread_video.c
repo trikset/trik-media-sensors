@@ -56,7 +56,6 @@ static int threadVideoSelectLoop(Runtime* _runtime, V4L2Input* _v4l2, FBOutput* 
   }
 
   trik_cv_algorithm_in_args targetDetectParams;
-  TargetDetectCommand targetDetectCommand;
 
   trik_cv_algorithm_in_args targetDetectParamsResult;
   if ((res = runtimeGetTargetDetectParams(_runtime, &targetDetectParams)) != 0) {
@@ -64,10 +63,12 @@ static int threadVideoSelectLoop(Runtime* _runtime, V4L2Input* _v4l2, FBOutput* 
     return res;
   }
 
+  TargetDetectCommand targetDetectCommand;
   if ((res = runtimeFetchTargetDetectCommand(_runtime, &targetDetectCommand)) != 0) {
     fprintf(stderr, "runtimeGetTargetDetectCommand() failed: %d\n", res);
     return res;
   }
+  targetDetectParams.auto_detect_hsv = targetDetectCommand.m_cmd;
 
   bool videoOutEnable;
   if ((res = runtimeGetVideoOutParams(_runtime, &videoOutEnable)) != 0) {
@@ -75,10 +76,15 @@ static int threadVideoSelectLoop(Runtime* _runtime, V4L2Input* _v4l2, FBOutput* 
     return res;
   }
 
+  if ((res = runtimeGetMxnParams(_runtime, &(targetDetectParams.extra_inArgs.mxnParams))) != 0) {
+    fprintf(stderr, "runtimeGetVideoOutParams() failed: %d\n", res);
+    return res;
+  }
+
   memcpy(_runtime->m_modules.m_dsp.dsp_in_buf->start, frameSrcPtr, frameSrcSize);
 
   trik_cv_algorithm_out_args targetArgs;
-  trik_cv_algorithm_out_target targetLocation;
+
 
   struct timespec start, end;
   double elapsed;
@@ -88,7 +94,8 @@ static int threadVideoSelectLoop(Runtime* _runtime, V4L2Input* _v4l2, FBOutput* 
     return -1;
   }
 
-  targetLocation = targetArgs.targets[0];
+  trik_cv_algorithm_out_target target;
+  target = targetArgs.targets[0];
   if (videoOutEnable)
     memcpy(frameDstPtr, _runtime->m_modules.m_dsp.dsp_out_buf->start, BUFFER_SIZE_FOR_FB);
 
@@ -104,7 +111,7 @@ static int threadVideoSelectLoop(Runtime* _runtime, V4L2Input* _v4l2, FBOutput* 
 
   switch (targetDetectCommand.m_cmd) {
   case 1:
-    if ((res = runtimeReportTargetDetectParams(_runtime, &targetDetectParamsResult)) != 0) {
+    if ((res = runtimeReportTargetDetectParams(_runtime, &targetArgs)) != 0) {
       fprintf(stderr, "runtimeReportTargetDetectParams() failed: %d\n", res);
       return res;
     }
@@ -112,9 +119,16 @@ static int threadVideoSelectLoop(Runtime* _runtime, V4L2Input* _v4l2, FBOutput* 
 
   case 0:
   default:
-    if ((res = runtimeReportTargetLocation(_runtime, &targetLocation)) != 0) {
-      fprintf(stderr, "runtimeReportTargetLocation() failed: %d\n", res);
-      return res;
+    if (_runtime->m_config.m_rcConfig.m_sensorType == TRIK_CV_ALGORITHM_MXN_SENSOR) {
+      if ((res = runtimeReportTargetColors(_runtime, &(target.out_target.targetColors))) != 0) {
+        fprintf(stderr, "runtimeReportTargetColors() failed: %d\n", res);
+        return res;
+      }
+    } else {
+      if ((res = runtimeReportTargetLocation(_runtime, &(target.out_target.targetLocation))) != 0) {
+        fprintf(stderr, "runtimeReportTargetLocation() failed: %d\n", res);
+        return res;
+      }
     }
     break;
   }
@@ -158,6 +172,11 @@ int threadVideo(Runtime* runtime) {
     goto exit_fb_close;
   }
 
+  if ((res = trik_req_cv_algorithm(runtime->m_config, srcImageDesc.m_lineLength)) < 0) {
+    fprintf(stderr,"failed to request a cv algorithm %d", res);
+    goto exit;
+  }
+
   if ((res = v4l2InputStart(v4l2)) != 0) {
     fprintf(stderr, "v4l2InputStart() failed: %d\n", res);
     goto exit_fb_close;
@@ -177,6 +196,7 @@ int threadVideo(Runtime* runtime) {
       goto exit_fb_stop;
     }
   }
+  printf("Exit video thread loop\n");
 
 exit_fb_stop:
   if ((res = fbOutputStop(fb)) != 0)

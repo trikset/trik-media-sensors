@@ -1,6 +1,7 @@
 #include <trik/sensors/cv_algorithms.h>
 
 #include <trik/sensors/cv_algorithms.hpp>
+#include <trik/sensors/video_format.h>
 
 namespace trik {
 namespace sensors {
@@ -13,12 +14,12 @@ ObjectSensorCvAlgorithm objectSensorCvAlgorithm;
 LineSensorCvAlgorithm lineSensorCvAlgorithm;
 MxnSensorCvAlgorithm mxnSensorCvAlgorithm;
 
-extern "C" int trik_init_cv_algorithm(enum trik_cv_algorithm algorithm) {
+extern "C" int trik_init_cv_algorithm(enum trik_cv_algorithm algorithm, enum VideoFormat video_format, uint32_t line_length) {
   ImageDesc inDesc = {
     .m_width = IMG_WIDTH,
     .m_height = IMG_HEIGHT,
-    .m_lineLength = IMG_WIDTH * 2,
-    .m_format = VideoFormat::YUV422,
+    .m_lineLength = line_length,
+    .m_format = video_format,
   };
   ImageDesc outDesc = {
     .m_width = IMG_HEIGHT,

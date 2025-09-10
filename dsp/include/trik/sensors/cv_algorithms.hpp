@@ -11,8 +11,9 @@
 #include <stdint.h>
 
 #include "image.hpp"
-#include "video_format.hpp"
+#include <trik/sensors/video_format.h>
 #include <trik/sensors/cv_algorithm_args.h>
+#include <ti/sysbios/family/c64p/Cache.h>
 
 namespace trik {
 namespace sensors {
@@ -69,6 +70,9 @@ public:
   virtual ~CvAlgorithm() {}
 
 protected:
+  typedef void (CvAlgorithm::*ConvertFuncPtr)(const ImageBuffer&);
+  ConvertFuncPtr convertImageFormatToHSV = nullptr;
+
   ImageDesc m_inImageDesc;
   ImageDesc m_outImageDesc;
 
@@ -324,6 +328,52 @@ protected:
     return u32_hsv;
   }
 
+    void convertImageNV16ToHsv(const ImageBuffer& _inImage)
+    {
+      const uint32_t srcImageRowEffectiveSize       = m_inImageDesc.m_width;
+      const uint32_t srcImageRowEffectiveToFullSize = m_inImageDesc.m_lineLength - srcImageRowEffectiveSize;
+      const int8_t* restrict srcImageRowY     = _inImage.m_ptr;
+      const int8_t* restrict srcImageRowC     = _inImage.m_ptr + m_inImageDesc.m_lineLength*m_inImageDesc.m_height;
+      const int8_t* restrict srcImageToY      = srcImageRowY + m_inImageDesc.m_lineLength*m_inImageDesc.m_height;
+      uint64_t* restrict rgb888hsvptr         = s_rgb888hsv;
+
+      assert(m_inImageDesc.m_height % 4 == 0); // verified in setup
+#pragma MUST_ITERATE(4, ,4)
+      while (srcImageRowY != srcImageToY)
+      {
+        assert(reinterpret_cast<intptr_t>(srcImageRowY) % 8 == 0); // let's pray...
+        assert(reinterpret_cast<intptr_t>(srcImageRowC) % 8 == 0); // let's pray...
+        const uint32_t* restrict srcImageColY4 = reinterpret_cast<const uint32_t*>(srcImageRowY);
+        const uint32_t* restrict srcImageColC4 = reinterpret_cast<const uint32_t*>(srcImageRowC);
+        srcImageRowY += srcImageRowEffectiveSize;
+        srcImageRowC += srcImageRowEffectiveSize;
+
+        assert(m_inImageDesc.m_width % 32 == 0); // verified in setup
+#pragma MUST_ITERATE(32/4, ,32/4)
+        while (reinterpret_cast<const int8_t*>(srcImageColY4) != srcImageRowY)
+        {
+          assert(reinterpret_cast<const int8_t*>(srcImageColC4) != srcImageRowC);
+
+          const uint32_t yy4x = *srcImageColY4++;
+          const uint32_t uv4x = _swap4(*srcImageColC4++);
+
+          const uint32_t yuyv12 = (_unpklu4(yy4x)) | (_unpklu4(uv4x) << 8);
+          const uint32_t yuyv34 = (_unpkhu4(yy4x)) | (_unpkhu4(uv4x) << 8);
+
+          const uint64_t rgb12 = convert2xYuyvToRgb888(yuyv12);
+          *rgb888hsvptr++ = _itoll(_loll(rgb12), convertRgb888ToHsv(_loll(rgb12)));
+          *rgb888hsvptr++ = _itoll(_hill(rgb12), convertRgb888ToHsv(_hill(rgb12)));
+
+          const uint64_t rgb34 = convert2xYuyvToRgb888(yuyv34);
+          *rgb888hsvptr++ = _itoll(_loll(rgb34), convertRgb888ToHsv(_loll(rgb34)));
+          *rgb888hsvptr++ = _itoll(_hill(rgb34), convertRgb888ToHsv(_hill(rgb34)));
+        }
+
+        srcImageRowY += srcImageRowEffectiveToFullSize;
+        srcImageRowC += srcImageRowEffectiveToFullSize;
+      }
+    }
+
   // Code from old media sensors. 
   // It seems (not exactly) that it is faster by 0.003 seconds, than code below (0.015 vs 0.018), 
   // check it later in assembler.
@@ -383,6 +433,14 @@ protected:
 
     if (m_inImageDesc.m_width % 32 != 0 || m_inImageDesc.m_height % 4 != 0)
       return false;
+    
+    if (_inImageDesc.m_format == VideoFormat::YUV422) {
+      convertImageFormatToHSV = &CvAlgorithm::convertImageYuyvToHsv;
+    } else if (_inImageDesc.m_format == VideoFormat::NV16) {
+      convertImageFormatToHSV = &CvAlgorithm::convertImageNV16ToHsv;
+    } else { 
+      return false;
+    }
 
 #define min(x, y) x < y ? x : y;
     const double srcToDstShift =
