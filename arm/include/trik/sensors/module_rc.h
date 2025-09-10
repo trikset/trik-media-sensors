@@ -16,7 +16,16 @@ typedef struct RCConfig // what user wants to set
   const char* m_fifoOutput;
   enum trik_cv_algorithm m_sensorType;
   bool m_videoOutEnable;
+  union {
+    MxnParams   m_mxnParams;
+  } m_extraParams;
 } RCConfig;
+
+typedef struct MxnParamsInput
+{
+  MxnParams   m_mxnParams;
+  bool m_mxnParamsUpdated;
+} MxnParamsInput;
 
 typedef struct RCInput {
   int m_fifoInputFd;
@@ -41,6 +50,9 @@ typedef struct RCInput {
 
   bool m_videoOutParamsUpdated;
   bool m_videoOutEnable;
+  union {
+    MxnParamsInput m_mxnParamsInput;
+  } m_extraRCInput;
 } RCInput;
 
 int rcInputInit(bool _verbose);
@@ -55,11 +67,12 @@ int rcInputReadFifoInput(RCInput* _rc);
 
 int rcInputGetTargetDetectParams(RCInput* _rc, trik_cv_algorithm_in_args* _targetDetectParams);
 int rcInputGetTargetDetectCommand(RCInput* _rc, TargetDetectCommand* _targetDetectCommand);
-
+int rcInputGetMxNParams(RCInput* _rc, MxnParams* mxnParams);
 int rcInputGetVideoOutParams(RCInput* _rc, bool* _videoOutEnable);
 
-int rcInputUnsafeReportTargetLocation(RCInput* _rc, const trik_cv_algorithm_out_target* _targetLocation);
-int rcInputUnsafeReportTargetDetectParams(RCInput* _rc, const trik_cv_algorithm_in_args* _targetDetectParams);
+int rcInputUnsafeReportTargetLocation(RCInput* _rc, const TargetLocation* _targetLocation);
+int rcInputUnsafeReportTargetColors(RCInput* _rc, const TargetColors* _targetColors);
+int rcInputUnsafeReportTargetDetectParams(RCInput* _rc, const trik_cv_algorithm_out_args* _targetDetectParams);
 
 #ifdef __cplusplus
 } // extern "C"

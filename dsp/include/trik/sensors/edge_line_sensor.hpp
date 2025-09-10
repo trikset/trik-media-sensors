@@ -35,9 +35,6 @@ static uint8_t s_y2[320 * 240];
 static uint8_t s_cb[320 * 240];
 static uint8_t s_cr[320 * 240];
 
-static uint32_t s_wi2wo[640];
-static uint32_t s_hi2ho[480];
-
 static int16_t s_xGrad[320 * 240 + 1];
 static int16_t s_yGrad[320 * 240 + 1];
 static int16_t s_gradMag[320 * 240 + 1];
@@ -79,6 +76,125 @@ private:
   int32_t m_targetX;
   int32_t m_targetY;
   uint32_t m_targetPoints;
+
+  typedef void (EdgeLineSensorCvAlgorithm::*ConvertFuncPtr)(const ImageBuffer&, ImageBuffer&);
+  ConvertFuncPtr convertImageFormatToHSV = nullptr;
+
+  void convertImageNV16ToRgb(const ImageBuffer& _inImage, ImageBuffer& _outImage)
+    {
+      const uint32_t width          = m_inImageDesc.m_width;
+      const uint32_t height         = m_inImageDesc.m_height;
+      const uint32_t imgSize        = width*height;
+      
+      uint16_t targetPointsPerRow;
+      uint16_t targetPointsCol;
+      
+//separate Cb Cr
+      uint8_t* restrict cb   = reinterpret_cast<uint8_t*>(s_cb);
+      uint8_t* restrict cr   = reinterpret_cast<uint8_t*>(s_cr);
+      const uint16_t* restrict CbCr = reinterpret_cast<const uint16_t*>(_inImage.m_ptr + 
+                                                                    m_inImageDesc.m_lineLength*m_inImageDesc.m_height);
+      #pragma MUST_ITERATE(8, ,8)
+      for(int i = 0; i < imgSize; i++) {
+          *(cb++) = static_cast<uint8_t>(*CbCr);
+          *(cr++) = static_cast<uint8_t>((*CbCr) >> 8);
+          CbCr++;
+      }
+
+
+//Sobel edge detection
+      const unsigned char* restrict y_in_sobel  = reinterpret_cast<const unsigned char*>(_inImage.m_ptr);
+      unsigned char* restrict   sobel_out = reinterpret_cast<unsigned char*>(s_y);
+      IMG_sobel_3x3_8(y_in_sobel, sobel_out, width, height);
+
+      IMG_thr_gt2max_8(reinterpret_cast<const unsigned char*>(s_y), 
+                       reinterpret_cast<unsigned char*>(s_y),
+                       width, height, 50);
+
+//detect line
+      const uint8_t* restrict sobelBin = reinterpret_cast<unsigned char*>(s_y);
+      assert(m_inImageDesc.m_height % 4 == 0); // verified in setup
+      #pragma MUST_ITERATE(4, ,4)
+      for(int r = 0; r < height; r++) {
+        targetPointsPerRow = 0;
+        targetPointsCol = 0;
+
+        assert(m_inImageDesc.m_width % 32 == 0); // verified in setup
+#pragma MUST_ITERATE(32, ,32)
+        for(int c = 0; c < width; c++) {
+          if(c > 15 && c < width - 15) {
+            const bool det = (*sobelBin == 0xFF);
+            targetPointsPerRow += det;
+            targetPointsCol += det?c:0;
+          }
+          sobelBin++;
+        }
+        m_targetX      += targetPointsCol;
+        m_targetPoints += targetPointsPerRow;
+      }
+
+#ifdef CORNERS
+//Harris corner detector
+      VLIB_xyGradientsAndMagnitude(reinterpret_cast<const uint8_t*>(_inImage.m_ptr), 
+                                   reinterpret_cast<int16_t*>(s_xGrad), 
+                                   reinterpret_cast<int16_t*>(s_yGrad),
+                                   reinterpret_cast<int16_t*>(s_gradMag), width, height);
+
+      VLIB_harrisScore_7x7(reinterpret_cast<const int16_t*>(s_xGrad),
+                           reinterpret_cast<const int16_t*>(s_yGrad),
+                           width, height,
+                           reinterpret_cast<int16_t*>(s_harrisScore),
+                           1500, 
+                           reinterpret_cast<uint8_t*>(s_buffer));
+
+      VLIB_nonMaxSuppress_7x7_S16(reinterpret_cast<const int16_t*>(s_harrisScore), 
+                                  width, height, 7000, 
+                                  reinterpret_cast<uint8_t*>(s_corners));
+#endif
+
+//in_img to rgb565
+      const short* restrict coeff = s_coeff_el;
+      const unsigned char* restrict res_in = reinterpret_cast<const unsigned char*>(s_y);
+      const unsigned char* restrict cb_in  = reinterpret_cast<const unsigned char*>(s_cb);
+      const unsigned char* restrict cr_in  = reinterpret_cast<const unsigned char*>(s_cr);
+      unsigned short* rgb565_out           = reinterpret_cast<unsigned short*>(s_gradMag);
+      IMG_ycbcr422pl_to_rgb565(coeff, res_in, cb_in, cr_in, rgb565_out, width*height);
+
+
+//lets try scaling out // & highlight corners
+      const uint16_t* restrict imgRgb565ptr  = reinterpret_cast<uint16_t*>(s_gradMag);
+      const uint32_t dstLineLength  = m_outImageDesc.m_lineLength;
+      const uint32_t* restrict p_hi2ho = s_hi2ho;
+      #pragma MUST_ITERATE(8, ,8)
+      for(int r = 0; r < height; r++) {
+        const uint32_t dR = *(p_hi2ho++);
+        uint16_t* restrict dIR = reinterpret_cast<uint16_t*>(_outImage.m_ptr + dR*dstLineLength);
+        const uint32_t* restrict p_wi2wo = s_wi2wo;
+        #pragma MUST_ITERATE(8, ,8)
+        for(int c = 0; c < width; c++) {
+          const uint32_t dC = *(p_wi2wo++);
+          *(dIR+dC) = *(imgRgb565ptr++);
+        }
+      }
+
+#ifdef CORNERS
+      const uint8_t* restrict corners  = reinterpret_cast<uint8_t*>(s_corners);      
+      p_hi2ho = s_hi2ho;
+      for(int r = 0; r < height; r++) {
+        const uint32_t dR = *(p_hi2ho++);
+        uint16_t* dIR = reinterpret_cast<uint16_t*>(_outImage.m_ptr + dR*dstLineLength);
+        const uint32_t* restrict p_wi2wo = s_wi2wo;
+        for(int c = 0; c < width; c++) {
+          const uint32_t dC = *(p_wi2wo++);
+          if(c > 5 && c < 315 && r > 5 && r < 235)
+            if (*corners != 0)
+              drawCornerHighlight(c, r, _outImage, 0xff0000);
+          corners++;
+        }
+      }
+#endif
+
+    }
 
   void convertImageYuyvToRgb(const ImageBuffer& _inImage, ImageBuffer& _outImage) {
     const uint32_t width = m_inImageDesc.m_width;
@@ -184,47 +300,21 @@ private:
 #endif
   }
 
-  void proceedImageHsv(const ImageBuffer& _inImage, ImageBuffer& _outImage) {
-    const uint8_t* restrict rgb888hsvptr = reinterpret_cast<const uint8_t*>(_inImage.m_ptr);
-    const uint32_t width = m_inImageDesc.m_width;
-    const uint32_t height = m_inImageDesc.m_height;
-    const uint32_t dstLineLength = m_outImageDesc.m_lineLength;
-    const /*uint32_t*/ double srcToDstShift = m_srcToDstShift;
-    /*
-          const uint64_t u64_hsv_range  = m_detectRange;
-          const uint32_t u32_hsv_expect = m_detectExpected;
-    */
-    uint32_t targetPointsPerRow;
-    uint32_t targetPointsCol;
-
-    assert(m_inImageDesc.m_height % 4 == 0); // verified in setup
-    for (uint32_t srcRow = 0; srcRow < height; ++srcRow) {
-      const uint32_t dstRow = srcRow * srcToDstShift;
-      uint16_t* restrict dstImageRow = reinterpret_cast<uint16_t*>(_outImage.m_ptr + dstRow * dstLineLength);
-
-      targetPointsPerRow = 0;
-      targetPointsCol = 0;
-      assert(m_inImageDesc.m_width % 32 == 0); // verified in setup
-      for (uint32_t srcCol = 0; srcCol < width; ++srcCol) {
-        const uint32_t dstCol = srcCol * srcToDstShift;
-        const uint8_t rgb888hsv = *rgb888hsvptr++;
-
-        const bool det = rgb888hsv < 60;
-        targetPointsPerRow += det;
-        targetPointsCol += det ? srcCol : 0;
-        if (det)
-          writeOutputPixel(dstImageRow + dstCol, 0x00ffff);
-      }
-      m_targetX += targetPointsCol;
-      m_targetY += srcRow * targetPointsPerRow;
-      m_targetPoints += targetPointsPerRow;
-    }
-  }
-
 public:
   virtual bool setup(const ImageDesc& _inImageDesc, const ImageDesc& _outImageDesc, int8_t* _fastRam, size_t _fastRamSize) {
     if (!commonSetup(_inImageDesc, _outImageDesc, _fastRam, _fastRamSize))
       return false;
+
+    // Edge sensor has its own conversion, think about the level 
+    // of abstraction of how to combine it all in cv_algorithms.hpp.
+    if (_inImageDesc.m_format == VideoFormat::YUV422) {
+      convertImageFormatToHSV = &EdgeLineSensorCvAlgorithm::convertImageYuyvToRgb;
+    } else if (_inImageDesc.m_format == VideoFormat::NV16) {
+      convertImageFormatToHSV = &EdgeLineSensorCvAlgorithm::convertImageNV16ToRgb;
+    } else { 
+      return false;
+    }
+
     return true;
   }
 
@@ -249,7 +339,7 @@ public:
     for (unsigned repeat = 0; repeat < DEBUG_REPEAT; ++repeat) {
 #endif
       if (m_inImageDesc.m_height > 0 && m_inImageDesc.m_width > 0)
-        convertImageYuyvToRgb(_inImage, _outImage);
+        (this->*convertImageFormatToHSV)(_inImage, _outImage);
 #ifdef DEBUG_REPEAT
     } // repeat
 #endif
@@ -265,15 +355,17 @@ public:
 
       drawRgbTargetCenterLine(targetX, drawY, _outImage, 0xff0000);
 
-      _outArgs.targets[0].x = ((targetX - static_cast<int32_t>(m_inImageDesc.m_width) / 2) * 100 * 2) / static_cast<int32_t>(m_inImageDesc.m_width);
-      _outArgs.targets[0].y = ((targetY - static_cast<int32_t>(m_inImageDesc.m_height) / 2) * 100 * 2) / static_cast<int32_t>(m_inImageDesc.m_height);
-      _outArgs.targets[0].size = static_cast<uint32_t>(targetRadius * 100 * 4) / static_cast<uint32_t>(m_inImageDesc.m_width + m_inImageDesc.m_height);
+      _outArgs.targets[0].out_target.targetLocation.x = ((targetX - static_cast<int32_t>(m_inImageDesc.m_width) / 2) * 100 * 2) / static_cast<int32_t>(m_inImageDesc.m_width);
+      _outArgs.targets[0].out_target.targetLocation.y = ((targetY - static_cast<int32_t>(m_inImageDesc.m_height) / 2) * 100 * 2) / static_cast<int32_t>(m_inImageDesc.m_height);
+      _outArgs.targets[0].out_target.targetLocation.size = static_cast<uint32_t>(targetRadius * 100 * 4) / static_cast<uint32_t>(m_inImageDesc.m_width + m_inImageDesc.m_height);
 
     } else {
-      _outArgs.targets[0].x = 0;
-      _outArgs.targets[0].y = 0;
-      _outArgs.targets[0].size = 0;
+      _outArgs.targets[0].out_target.targetLocation.x = 0;
+      _outArgs.targets[0].out_target.targetLocation.y = 0;
+      _outArgs.targets[0].out_target.targetLocation.size = 0;
     }
+
+    Cache_wbInv(_outImage.m_ptr, _outImage.m_size, Cache_Type_ALL, TRUE);
 
     return true;
   }

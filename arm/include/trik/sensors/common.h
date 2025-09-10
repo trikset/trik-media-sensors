@@ -9,10 +9,10 @@ extern "C" {
 #endif // __cplusplus
 
 typedef struct ImageDescription {
-  size_t m_width;
-  size_t m_height;
-  size_t m_lineLength;
-  size_t m_imageSize;
+  uint32_t m_width;
+  uint32_t m_height;
+  uint32_t m_lineLength;
+  uint32_t m_imageSize;
   uint32_t m_format;
 } ImageDescription;
 

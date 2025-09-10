@@ -12,7 +12,7 @@
 #include <vector>
 
 #include "image.hpp"
-#include "video_format.hpp"
+#include <trik/sensors/video_format.h>
 
 //#define HSV_CORRECTION
 
@@ -93,23 +93,13 @@ public:
 
   virtual bool run(const ImageBuffer& _inImage, ImageBuffer& _outImage, const trik_cv_algorithm_in_args& _inArgs, trik_cv_algorithm_out_args& _outArgs) {
     // /if (_inArgs.setHsvRange) {
-    int32_t detectHueFrom = makeValueWrap(_inArgs.detect_hue_from, -_inArgs.detect_hue_to, 0, 359);
-    int32_t detectHueTo = makeValueWrap(_inArgs.detect_hue_from, +_inArgs.detect_hue_to, 0, 359);
-    int32_t detectSatFrom = makeValueRange(_inArgs.detect_sat_from, -_inArgs.detect_sat_to, 0, 100);
-    int32_t detectSatTo = makeValueRange(_inArgs.detect_sat_from, +_inArgs.detect_sat_to, 0, 100);
-    int32_t detectValFrom = makeValueRange(_inArgs.detect_val_from, -_inArgs.detect_val_to, 0, 100);
-    int32_t detectValTo = makeValueRange(_inArgs.detect_val_from, +_inArgs.detect_val_to, 0, 100);
 
-    m_detectHueTol = range<int16_t>(0, (_inArgs.detect_hue_to * 255) / 359, 255); // scaling 0..359 to 0..255;
-    m_detectSatTol = range<int16_t>(0, (_inArgs.detect_sat_to * 255) / 100, 255); // scaling 0..100 to 0..255;
-    m_detectValTol = range<int16_t>(0, (_inArgs.detect_val_to * 255) / 100, 255); // scaling 0..100 to 0..255;
-
-    m_detectHueFrom = range<int16_t>(0, (detectHueFrom * 255) / 359, 255); // scaling 0..359 to 0..255
-    m_detectHueTo = range<int16_t>(0, (detectHueTo * 255) / 359, 255);     // scaling 0..359 to 0..255
-    m_detectSatFrom = range<int16_t>(0, (detectSatFrom * 255) / 100, 255); // scaling 0..100 to 0..255
-    m_detectSatTo = range<int16_t>(0, (detectSatTo * 255) / 100, 255);     // scaling 0..100 to 0..255
-    m_detectValFrom = range<int16_t>(0, (detectValFrom * 255) / 100, 255); // scaling 0..100 to 0..255
-    m_detectValTo = range<int16_t>(0, (detectValTo * 255) / 100, 255);     // scaling 0..100 to 0..255
+    m_detectHueFrom = range<int16_t>(0, (_inArgs.detect_hue_from * 255) / 359, 255); // scaling 0..359 to 0..255
+    m_detectHueTo = range<int16_t>(0, (_inArgs.detect_hue_to * 255) / 359, 255);     // scaling 0..359 to 0..255
+    m_detectSatFrom = range<int16_t>(0, (_inArgs.detect_sat_from * 255) / 100, 255); // scaling 0..100 to 0..255
+    m_detectSatTo = range<int16_t>(0, (_inArgs.detect_sat_to * 255) / 100, 255);     // scaling 0..100 to 0..255
+    m_detectValFrom = range<int16_t>(0, (_inArgs.detect_val_from * 255) / 100, 255); // scaling 0..100 to 0..255
+    m_detectValTo = range<int16_t>(0, (_inArgs.detect_val_to * 255) / 100, 255);     // scaling 0..100 to 0..255
 
     resetHsvRange();
     // }
@@ -187,6 +177,10 @@ public:
         maxS = midS[i];
       }
     }
+
+    m_detectHueTol = (m_detectHueFrom + m_detectHueTo) / 2 - m_detectHueTo;
+    m_detectSatTol = (m_detectSatFrom + m_detectSatTo) / 2 - m_detectSatTo;
+    m_detectValTol = (m_detectValFrom + m_detectValTo) / 2 - m_detectValTo;
 
     if (detectedPoints > 32) {
 

@@ -7,12 +7,14 @@ extern "C" {
 
 #include <stdint.h>
 #include <trik/sensors/cv_algorithm.h>
+#include <trik/sensors/runtime.h>
 
 int trik_init_arm_server(uint16_t rproc_id);
 int trik_destroy_arm_server(void);
 
 void* trik_start_arm_server(void* _arg);
 int trik_req_step(struct trik_cv_algorithm_out_args* out_args, struct trik_cv_algorithm_in_args in_args);
+int trik_req_cv_algorithm(RuntimeConfig r_config, uint32_t line_length);
 #ifdef __cplusplus
 }
 #endif

@@ -9,6 +9,16 @@ extern "C" {
 #include <stdint.h>
 
 #define TRIK_MAX_TARGET_COUNT 8
+#define COLORS_NUM   9
+
+#define COLORS_WIDTHM_MAX   3
+#define COLORS_HEIGHTN_MAX  3
+
+typedef struct MxnParams
+{
+  size_t m_m;
+  size_t m_n;
+} MxnParams;
 
 typedef struct trik_cv_algorithm_in_args {
   uint16_t detect_hue_from; // [0..359]
@@ -18,14 +28,29 @@ typedef struct trik_cv_algorithm_in_args {
   uint8_t detect_val_from;  // [0..100]
   uint8_t detect_val_to;    // [0..100]
   bool auto_detect_hsv;     // [true|false]
-  uint16_t width_n;         // [1..320]
-  uint16_t height_n;        // [1..240]
+
+  union {
+    MxnParams mxnParams;
+  } extra_inArgs;
 } trik_cv_algorithm_in_args;
 
-typedef struct trik_cv_algorithm_out_target {
+typedef struct TargetColors
+{
+  uint32_t m_colors[COLORS_NUM]; //treeColor
+} TargetColors;
+
+typedef struct TargetLocation
+{
   int16_t x;
   int16_t y;
   uint16_t size;
+} TargetLocation;
+
+typedef struct trik_cv_algorithm_out_target {
+  union {
+    TargetLocation targetLocation;
+    TargetColors targetColors;
+  } out_target;
 } trik_cv_algorithm_out_target;
 
 typedef struct trik_cv_algorithm_out_args {

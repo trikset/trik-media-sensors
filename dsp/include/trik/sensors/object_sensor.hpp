@@ -25,7 +25,8 @@
 
 #include "bitmap_builder.hpp"
 #include "clusterizer.hpp"
-#include "hsv_range_detector.hpp"
+#include "hsv_range_detector_object.hpp"
+#include <trik/sensors/video_format.h>
 
 namespace trik {
 namespace sensors {
@@ -169,11 +170,11 @@ public:
 #endif
 
       if (m_inImageDesc.m_height > 0 && m_inImageDesc.m_width > 0) {
-        convertImageYuyvToHsv(_inImage);
+        (this->*convertImageFormatToHSV)(_inImage);
 
         bool autoDetectHsv = static_cast<bool>(_inArgs.auto_detect_hsv); // true or false
         if (autoDetectHsv) {
-          HsvRangeDetector rangeDetector = HsvRangeDetector(m_inImageDesc.m_width, m_inImageDesc.m_height, m_detectZoneScale);
+          HsvRangeDetectorObject rangeDetector = HsvRangeDetectorObject(m_inImageDesc.m_width, m_inImageDesc.m_height, m_detectZoneScale);
           rangeDetector.detect(_outArgs.detect_hue_from, _outArgs.detect_hue_to, _outArgs.detect_sat_from, _outArgs.detect_sat_to, _outArgs.detect_val_from,
             _outArgs.detect_val_to, s_rgb888hsv);
         }
@@ -188,7 +189,6 @@ public:
     } // repeat
 #endif
 
-    // draw taget pointer
     const int step = m_inImageDesc.m_height / m_detectZoneScale;
     const int hHeight = m_inImageDesc.m_height / 2;
     const int hWidth = m_inImageDesc.m_width / 2;
@@ -218,17 +218,19 @@ public:
 
         drawFatPixel(x, y, _outImage, 0xff0000);
 
-        _outArgs.targets[i].size = size;
-        _outArgs.targets[i].x = ((x - static_cast<int32_t>(m_inImageDesc.m_width) / 2) * 100 * 2) / static_cast<int32_t>(m_inImageDesc.m_width);
-        _outArgs.targets[i].y = ((y - static_cast<int32_t>(m_inImageDesc.m_height) / 2) * 100 * 2) / static_cast<int32_t>(m_inImageDesc.m_height);
+        _outArgs.targets[i].out_target.targetLocation.size = size;
+        _outArgs.targets[i].out_target.targetLocation.x = ((x - static_cast<int32_t>(m_inImageDesc.m_width) / 2) * 100 * 2) / static_cast<int32_t>(m_inImageDesc.m_width);
+        _outArgs.targets[i].out_target.targetLocation.y = ((y - static_cast<int32_t>(m_inImageDesc.m_height) / 2) * 100 * 2) / static_cast<int32_t>(m_inImageDesc.m_height);
       }
     }
 
     if (noObjects) {
-      _outArgs.targets[0].x = 0;
-      _outArgs.targets[0].y = 0;
-      _outArgs.targets[0].size = 0;
+      _outArgs.targets[0].out_target.targetLocation.x = 0;
+      _outArgs.targets[0].out_target.targetLocation.y = 0;
+      _outArgs.targets[0].out_target.targetLocation.size = 0;
     }
+
+    Cache_wbInv(_outImage.m_ptr, _outImage.m_size, Cache_Type_ALL, TRUE);
 
     return true;
   }

@@ -194,14 +194,16 @@ public:
 
       drawOutputCircle(targetX, targetY, targetRadius, _outImage, 0xffff00);
 
-      _outArgs.targets[0].size = ((targetX - static_cast<int32_t>(m_inImageDesc.m_width) / 2) * 100 * 2) / static_cast<int32_t>(m_inImageDesc.m_width);
-      _outArgs.targets[0].size = ((targetY - static_cast<int32_t>(m_inImageDesc.m_height) / 2) * 100 * 2) / static_cast<int32_t>(m_inImageDesc.m_height);
-      _outArgs.targets[0].size = static_cast<uint32_t>(targetRadius * 100 * 4) / static_cast<uint32_t>(m_inImageDesc.m_width + m_inImageDesc.m_height);
+      _outArgs.targets[0].out_target.targetLocation.x = ((targetX - static_cast<int32_t>(m_inImageDesc.m_width) / 2) * 100 * 2) / static_cast<int32_t>(m_inImageDesc.m_width);
+      _outArgs.targets[0].out_target.targetLocation.y = ((targetY - static_cast<int32_t>(m_inImageDesc.m_height) / 2) * 100 * 2) / static_cast<int32_t>(m_inImageDesc.m_height);
+      _outArgs.targets[0].out_target.targetLocation.size = static_cast<uint32_t>(targetRadius * 100 * 4) / static_cast<uint32_t>(m_inImageDesc.m_width + m_inImageDesc.m_height);
     } else {
-      _outArgs.targets[0].x = 0;
-      _outArgs.targets[0].y = 0;
-      _outArgs.targets[0].size = 0;
+      _outArgs.targets[0].out_target.targetLocation.x = 0;
+      _outArgs.targets[0].out_target.targetLocation.y = 0;
+      _outArgs.targets[0].out_target.targetLocation.size = 0;
     }
+
+    Cache_wbInv(_outImage.m_ptr, _outImage.m_size, Cache_Type_ALL, TRUE);
 
     return true;
   }

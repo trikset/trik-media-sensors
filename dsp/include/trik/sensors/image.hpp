@@ -5,7 +5,7 @@
 #error C++-only header
 #endif
 
-#include "video_format.hpp"
+#include <trik/sensors/video_format.h>
 #include <cstddef>
 #include <stdint.h>
 
@@ -28,8 +28,5 @@ struct ImageBuffer {
 
 }
 }
-
-#define IMG_WIDTH 320
-#define IMG_HEIGHT 240
 
 #endif // !TRIK_VIDTRANSCODE_CV_INTERNAL_VIDTRANSCODE_CV_H_
