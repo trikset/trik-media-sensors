@@ -130,11 +130,11 @@ private:
       }
     }
 
-    // return h, s and v as h_max, s_max and _max with values
+    // return h, s and v as h_max, s_max and v_max with values
     // scaled to be between 0 and 255.
-    int hue = ch_max * m_hueScale;
-    int sat = cs_max * m_satScale;
-    int val = cv_max * m_valScale;
+    int hue = (ch_max * 255) / (m_hueClsters - 1);
+    int sat = (cs_max * 255) / (m_satClsters - 1);
+    int val = (cv_max * 255) / (m_valClsters - 1);
 
     return HSVtoRGB(hue, sat, val);
   }
@@ -172,11 +172,11 @@ private:
       subImg += gap;
     }
 
-    // return h, s and v as h_max, s_max and _max with values
+    // return h, s and v as h_max, s_max and v_max with values
     // scaled to be between 0 and 255.
-    int hue = ch_max * m_hueScale;
-    int sat = cs_max * m_satScale;
-    int val = cv_max * m_valScale;
+    int hue = (ch_max * 255) / (m_hueClsters - 1);
+    int sat = (cs_max * 255) / (m_satClsters - 1);
+    int val = (cv_max * 255) / (m_valClsters - 1);
 
     return HSVtoRGB(hue, sat, val);
   }
