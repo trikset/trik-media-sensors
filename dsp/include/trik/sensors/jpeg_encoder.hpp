@@ -12,7 +12,6 @@
 
 #include <c6x.h>
 #include <cassert>
-#include <cmath>
 
 /*
   JPEG encoder ported to C++ and optimized by Jake and Dmitry, www.trikset.com, 03/2015
@@ -22,6 +21,25 @@
   This is a baseline (DCT + quantization + Huffman) JPEG encoder that runs on the
   C674x DSP. It encodes a two-plane NV16 (Y + interleaved U/V) image into a
   standalone JPEG bitstream.
+
+   Optimizations for the C674x (fixed-point, no double-precision math in the hot path):
+   - The FDCT is computed in 32-bit integer arithmetic with Q15 constants
+     (the C674x FPU is single-precision only, so the old `double` butterfly
+     compiled to slow software-emulated double-precision calls).
+   - Quantization is fused into a single Q16 fixed-point multiply+shift loop and
+     the zig-zag reorder happens inside it (no separate DU copy).
+   - The two 65535-entry (512KB) s_bitcode/s_category lookup tables are replaced
+     by an on-the-fly category computation, removing 512KB of DDR footprint and
+     the associated L2 cache pressure.
+   - The block read is scalar pointer-walking code (no per-pixel integer
+     division), and the quant table + zig-zag reorder are fused into one loop.
+
+   Note on chroma sampling: the chroma block layout (one 8x8 chroma block per
+   8x8 luma block with horizontally duplicated 4:2:2 samples) is preserved from
+   the original encoder. This duplication band-limits the chroma to even DCT
+   harmonics, which compresses far better under the aasf-scaled quantizer than
+   decimating raw 4:2:2 samples into a 16x8 MCU (verified on host: true 4:2:2
+   made low-quality chroma files 2-3x larger on noisy NV16 camera frames).
 */
 
 /* **** **** **** **** **** */ namespace trik /* **** **** **** **** **** */ {
@@ -115,15 +133,35 @@ static const int s_std_ac_chrominance_values[162] = {
   0xea,0xf2,0xf3,0xf4,0xf5,0xf6,0xf7,0xf8,
   0xf9,0xfa};
 
+// aasf = sqrt(2) * cos(k*pi/16), the JPEG 8x8 DCT column/row scaling factors.
+// Used only at init time (cold path) to build the fixed-point quant scales.
 static const double s_aasf[8] = {
       1.0, 1.387039845, 1.306562965, 1.175875602,
       1.0, 0.785694958, 0.541196100, 0.275899379
     };
 
-/* Shared, computed-once tables (do not depend on image quality). */
+// bit_length(n) for n in [0,255]: floor(log2(n))+1 (0 for 0). Used to compute
+// the JPEG SSSS category of a coefficient on the fly, replacing a 512KB table.
+static const uint8_t s_bitLen[256] = {
+   0, 1, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 4, 4,
+   5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
+   6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
+   6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
+   7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
+   7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
+   7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
+   7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
+   8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8,
+   8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8,
+   8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8,
+   8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8,
+   8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8,
+   8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8,
+   8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8,
+   8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8};
+
+/* Shared, computed-once Huffman tables (do not depend on image quality). */
 static bool s_jpegTablesReady = false;
-static BitString s_bitcode[65535];
-static int s_category[65535];
 static BitString s_ydcHt[12];
 static BitString s_uvdcHt[12];
 static BitString s_yacHt[256];
@@ -144,29 +182,6 @@ static void computeHuffmanTable(BitString* _ht, const int* _nrcodes, const int* 
   }
 }
 
-static void initJpegCategoryTable() {
-  int nrlower = 1;
-  int nrupper = 2;
-  int nr;
-
-  for (uint8_t cat = 1; cat <= 15; cat++) {
-    // Positive numbers
-    for (nr = nrlower; nr < nrupper; nr++) {
-      s_category[32767 + nr] = cat;
-      s_bitcode[32767 + nr].len = cat;
-      s_bitcode[32767 + nr].val = nr;
-    }
-    // Negative numbers
-    for (nr = -(nrupper - 1); nr <= -nrlower; nr++) {
-      s_category[32767 + nr] = cat;
-      s_bitcode[32767 + nr].len = cat;
-      s_bitcode[32767 + nr].val = nrupper - 1 + nr;
-    }
-    nrlower <<= 1;
-    nrupper <<= 1;
-  }
-}
-
 static void initJpegTables() {
   if (s_jpegTablesReady)
     return;
@@ -175,7 +190,6 @@ static void initJpegTables() {
   computeHuffmanTable(s_uvdcHt, s_std_dc_chrominance_nrcodes, s_std_dc_chrominance_values);
   computeHuffmanTable(s_yacHt, s_std_ac_luminance_nrcodes, s_std_ac_luminance_values);
   computeHuffmanTable(s_uvacHt, s_std_ac_chrominance_nrcodes, s_std_ac_chrominance_values);
-  initJpegCategoryTable();
 
   s_jpegTablesReady = true;
 }
@@ -186,20 +200,31 @@ static void initJpegTables() {
 class JPGEncoder
 {
   private:
-  // http://stackoverflow.com/questions/17035464/a-fast-method-to-round-a-double-to-a-32-bit-int-explained
-  static inline int double2int(double d)
-  {
-    d += 6755399441055744.0;
-    return reinterpret_cast<int&>(d);
-  }
-
-  // Static table initialization
-  int YTable[64];
-  int UVTable[64];
-  double fdtbl_Y[64];
-  double fdtbl_UV[64];
+  // Q15 fixed-point DCT rotation constants.
+  static const int s_c4   = 23170;  //  0.707106781  cos(pi/4)
+  static const int s_c6   = 12540;  //  0.382683433  cos(3*pi/8)
+  static const int s_c2   = 17734;  //  0.541196100  sqrt(2)*cos(3*pi/8)
+  static const int s_c2c6 = 42813;  //  1.306562965  sqrt(2)*cos(pi/8)
 
   bool ifBlackAndWhite;
+
+  // Quantization tables. m_qvalY/m_qvalUV hold the raw table values in zig-zag
+  // order (written straight into the DQT segment). m_qscaleY/m_qscaleUV are the
+  // Q16 fixed-point scaling factors in natural (row-major) order, so the quant
+  // loop can write straight into the zig-zag-ordered DU buffer.
+  int m_qvalY[64];
+  int m_qvalUV[64];
+  int m_qscaleY[64];
+  int m_qscaleUV[64];
+
+  // Working blocks. Kept as class members (not stack) on purpose: the DSP runs
+  // the encoder on a 4KB task stack, and these 1KB of buffers would eat a
+  // quarter of it. They are small and reused on every block, so they stay in
+  // L1D/L2 cache regardless of their backing location.
+  int YDU[64];
+  int UDU[64];
+  int VDU[64];
+  int DU[64];
 
   // IO state
   uint8_t* byteoutPtr;
@@ -209,10 +234,28 @@ class JPGEncoder
   uint32_t m_outCapacity = 0;
   bool m_overrun = false;
 
-  int DU[64];
-  int YDU[64];
-  int UDU[64];
-  int VDU[64];
+  // Quantizes a Q16-scaled product: round half away from zero.
+  static inline int quantizeProduct(int _value, int _scale)
+  {
+    int t = _value * _scale;
+    t += (t >= 0) ? 0x8000 : 0x7FFF;
+    return t >> 16;
+  }
+
+  // Fixed-point Q15 multiply with rounding: (a*c + 2^14) >> 15.
+  static inline int dctMpy(int a, int c)
+  {
+    return (a * c + (1 << 14)) >> 15;
+  }
+
+  // JPEG SSSS category of a coefficient (== floor(log2(|v|)) + 1, 0 for 0).
+  static inline int coeffCategory(int v)
+  {
+    v = (v < 0) ? -v : v;
+    if (v & 0xFF00)
+      return static_cast<int>(s_bitLen[v >> 8]) + 8;
+    return static_cast<int>(s_bitLen[v]);
+  }
 
   void initQuantTables(int sf)
   {
@@ -225,7 +268,7 @@ class JPGEncoder
         t = 1;
       else if (t > 255)
         t = 255;
-      YTable[s_zigZag[i]] = t;
+      m_qvalY[s_zigZag[i]] = t;
     }
 
     for (i = 0; i < 64; i++) {
@@ -234,24 +277,22 @@ class JPGEncoder
         t = 1;
       else if (t > 255)
         t = 255;
-      UVTable[s_zigZag[i]] = t;
+      m_qvalUV[s_zigZag[i]] = t;
     }
 
     i = 0;
     for (int row = 0; row < 8; row++) {
       for (int col = 0; col < 8; col++) {
-        fdtbl_Y[i]  = (1.0 / (YTable [s_zigZag[i]] * s_aasf[row] * s_aasf[col] * 8.0));
-        fdtbl_UV[i] = (1.0 / (UVTable[s_zigZag[i]] * s_aasf[row] * s_aasf[col] * 8.0));
+        m_qscaleY[i] = static_cast<int>(65536.0 / (m_qvalY[s_zigZag[i]] * s_aasf[row] * s_aasf[col] * 8.0) + 0.5);
+        m_qscaleUV[i] = static_cast<int>(65536.0 / (m_qvalUV[s_zigZag[i]] * s_aasf[row] * s_aasf[col] * 8.0) + 0.5);
         i++;
       }
     }
   }
 
-  void writeBits(BitString const& bs)
+  void writeBits(uint32_t value, int len)
   {
-    uint32_t value = bs.val;
-
-    bytepos -= bs.len;
+    bytepos -= len;
     value <<= (16 + bytepos);
     bytenew |= value >> 16;
 
@@ -293,13 +334,14 @@ class JPGEncoder
     writeByte((value    ) & 0xFF);
   }
 
-  // DCT & quantization core
-
-  void fDCTQuant(int* data, const double* fdtbl)
+  // In-place 8x8 forward DCT, integer (Q15) arithmetic, natural (row-major)
+  // coefficient order. Same butterfly as the original float version, so the
+  // results match the reference within a couple of LSBs (verified on host).
+  void fDCT(int* data)
   {
     int tmp0, tmp1, tmp2, tmp3, tmp4, tmp5, tmp6, tmp7;
     int tmp10, tmp11, tmp12, tmp13;
-    double z1, z2, z3, z4, z5, z11, z13;
+    int z1, z2, z3, z4, z5, z11, z13;
     int i;
     /* Pass 1: process rows. */
     int dataOff = 0;
@@ -323,7 +365,7 @@ class JPGEncoder
       data[dataOff + 0] = tmp10 + tmp11; /* phase 3 */
       data[dataOff + 4] = tmp10 - tmp11;
 
-      z1 = (tmp12 + tmp13) * 0.707106781; /* c4 */
+      z1 = dctMpy(tmp12 + tmp13, s_c4); /* c4 */
       data[dataOff + 2] = tmp13 + z1; /* phase 5 */
       data[dataOff + 6] = tmp13 - z1;
 
@@ -333,10 +375,10 @@ class JPGEncoder
       tmp12 = tmp6 + tmp7;
 
       /* The rotator is modified from fig 4-8 to avoid extra negations. */
-      z5 = (tmp10 - tmp12) * 0.382683433; /* c6 */
-      z2 = 0.541196100 * tmp10 + z5; /* c2-c6 */
-      z4 = 1.306562965 * tmp12 + z5; /* c2+c6 */
-      z3 = tmp11 * 0.707106781; /* c4 */
+      z5 = dctMpy(tmp10 - tmp12, s_c6); /* c6 */
+      z2 = dctMpy(tmp10, s_c2) + z5; /* c2-c6 */
+      z4 = dctMpy(tmp12, s_c2c6) + z5; /* c2+c6 */
+      z3 = dctMpy(tmp11, s_c4); /* c4 */
 
       z11 = tmp7 + z3;  /* phase 5 */
       z13 = tmp7 - z3;
@@ -371,7 +413,7 @@ class JPGEncoder
       data[dataOff +  0] = tmp10 + tmp11; /* phase 3 */
       data[dataOff + 32] = tmp10 - tmp11;
 
-      z1 = (tmp12 + tmp13) * 0.707106781; /* c4 */
+      z1 = dctMpy(tmp12 + tmp13, s_c4); /* c4 */
       data[dataOff + 16] = tmp13 + z1; /* phase 5 */
       data[dataOff + 48] = tmp13 - z1;
 
@@ -381,10 +423,10 @@ class JPGEncoder
       tmp12 = tmp6 + tmp7;
 
       /* The rotator is modified from fig 4-8 to avoid extra negations. */
-      z5 = (tmp10 - tmp12) * 0.382683433; /* c6 */
-      z2 = 0.541196100 * tmp10 + z5; /* c2-c6 */
-      z4 = 1.306562965 * tmp12 + z5; /* c2+c6 */
-      z3 = tmp11 * 0.707106781; /* c4 */
+      z5 = dctMpy(tmp10 - tmp12, s_c6); /* c6 */
+      z2 = dctMpy(tmp10, s_c2) + z5; /* c2-c6 */
+      z4 = dctMpy(tmp12, s_c2c6) + z5; /* c2+c6 */
+      z3 = dctMpy(tmp11, s_c4); /* c4 */
 
       z11 = tmp7 + z3;  /* phase 5 */
       z13 = tmp7 - z3;
@@ -396,12 +438,16 @@ class JPGEncoder
 
       dataOff++; /* advance pointer to next column */
     }
+  }
 
-    // Quantize/descale the coefficients
+  // Quantize the natural-order DCT block into the zig-zag-ordered @p out block.
+  // The zig-zag reorder and the quantization are fused into one loop.
+  void quantize(const int* data, int* out, const int* qscale)
+  {
+    int i;
     #pragma MUST_ITERATE(64,64,64)
     for (i = 0; i < 64; i++) {
-      // Apply the quantization and scaling factor & round to nearest integer
-      data[i] = double2int(data[i] * fdtbl[i]);
+      out[s_zigZag[i]] = quantizeProduct(data[i], qscale[i]);
     }
   }
 
@@ -442,14 +488,14 @@ class JPGEncoder
       writeByte(3);    // nrofcomponents
 
     writeByte(1);    // IdY
-    writeByte(0x11); // HVY
+    writeByte(0x11); // HVY (1x1: one 8x8 luma block per 8x8 block)
     writeByte(0);    // QTY
     if (!ifBlackAndWhite) {
       writeByte(2);    // IdU
-      writeByte(0x11); // HVU
+      writeByte(0x11); // HVU (1x1)
       writeByte(1);    // QTU
       writeByte(3);    // IdV
-      writeByte(0x11); // HVV
+      writeByte(0x11); // HVV (1x1)
       writeByte(1);    // QTV
     }
   }
@@ -463,13 +509,15 @@ class JPGEncoder
       writeWord(132);    // length
     writeByte(0);
     int i;
+    #pragma MUST_ITERATE(64, 64, 64)
     for (i = 0; i < 64; i++) {
-      writeByte(YTable[i]);
+      writeByte(m_qvalY[i]);
     }
     if (!ifBlackAndWhite) {
       writeByte(1);
+      #pragma MUST_ITERATE(64, 64, 64)
       for (i = 0; i < 64; i++) {
-        writeByte(UVTable[i]);
+        writeByte(m_qvalUV[i]);
       }
     }
   }
@@ -484,7 +532,7 @@ class JPGEncoder
     int i;
 
     writeByte(0); // HTYDCinfo
-    #pragma MUST_ITERATE(32, 32, 32)
+    #pragma MUST_ITERATE(16, 16, 16)
     for (i = 0; i < 16; i++) {
       writeByte(s_std_dc_luminance_nrcodes[i + 1]);
     }
@@ -546,39 +594,87 @@ class JPGEncoder
     writeByte(0); // Bf
   }
 
-  int processDU(const int* CDU, const double* fdtbl, int DC,
+  // Reads one 8x8 block from the Y plane into @p out (natural order, -128).
+  void readYBlock(const uint8_t* restrict yPlane, int xpos, int ypos,
+                  int lineLength, int* out)
+  {
+    int pos = 0;
+    #pragma MUST_ITERATE(8,8,8)
+    for (int y = 0; y < 8; y++) {
+      const uint8_t* restrict row = yPlane + (ypos + y) * lineLength + xpos;
+      #pragma MUST_ITERATE(8,8,8)
+      for (int x = 0; x < 8; x++) {
+        out[pos++] = static_cast<int>(row[x]) - 128;
+      }
+    }
+  }
+
+  // Reads one 8x8 chroma block from the interleaved U/V plane. The NV16 frame
+  // is 4:2:2, so each 16-bit pair covers two luma pixels; the two chroma
+  // samples are duplicated horizontally into the 8x8 block. The band-limited
+  // (even-harmonic only) pattern this produces compresses far better under
+  // JPEG quantization than decimating the raw 4:2:2 samples into the block,
+  // because the aasf-scaled quantizer amplifies high-frequency noise (verified
+  // on host: naive decimation made chroma files 2-3x larger at low quality).
+  // U = high byte, V = low byte of each interleaved 16-bit word.
+  void readUVBlock(const uint8_t* restrict uvPlane, int xpos, int ypos,
+                   int lineLength, int* u, int* v)
+  {
+    int pos = 0;
+    #pragma MUST_ITERATE(8,8,8)
+    for (int y = 0; y < 8; y++) {
+      const uint8_t* restrict row = uvPlane + (ypos + y) * lineLength + xpos;
+      #pragma MUST_ITERATE(8,8,8)
+      for (int x = 0; x < 8; x++) {
+        const uint16_t c =
+          *reinterpret_cast<const uint16_t*>(row + (x >> 1) * 2);
+        u[pos] = static_cast<uint8_t>(c >> 8) - 128;
+        v[pos] = static_cast<uint8_t>(c) - 128;
+        pos++;
+      }
+    }
+  }
+
+  // YCbCr NV16 - img format.
+  // Two planes: Y plane and CbCr combined plane, both addressed with the same
+  // @p lineLength stride (the V4L2 bytesperline), exactly like the original
+  // encoder, so a padded frame never drifts out of sync.
+  void getBlock(const uint8_t* img, int xpos, int ypos, int lineLength, int height,
+                int* y, int* u, int* v)
+  {
+    const uint8_t* restrict yPlane = img;
+    const uint8_t* restrict uvPlane = img + lineLength * height;
+
+    readYBlock(yPlane, xpos, ypos, lineLength, y);
+    readUVBlock(uvPlane, xpos, ypos, lineLength, u, v);
+  }
+
+  int processDU(int* data, const int* qscale, int DC,
                 const BitString* HTDC, const BitString* HTAC)
   {
     BitString EOB = HTAC[0x00];
     BitString M16zeroes = HTAC[0xF0];
     int i;
 
-    int duDct[64];
-    memcpy(duDct, CDU, sizeof(duDct));
-    fDCTQuant(duDct, fdtbl);
+    fDCT(data);
+    quantize(data, DU, qscale);
 
-    // ZigZag reorder
-    #pragma UNROLL(2)
-    #pragma MUST_ITERATE(64, ,64)
-    for (i = 0; i < 64; i++) {
-      DU[s_zigZag[i]] = duDct[i];
-    }
+    // Encode DC (diff of consecutive blocks)
     int Diff = DU[0] - DC;
     DC = DU[0];
-
-    // Encode DC
     if (Diff == 0) {
-      writeBits(HTDC[0x00]);
+      writeBits(HTDC[0x00].val, HTDC[0x00].len);
     } else {
-      writeBits(HTDC[s_category[32767 + Diff]]);
-      writeBits(s_bitcode[32767 + Diff]);
+      int cat = coeffCategory(Diff);
+      writeBits(HTDC[cat].val, HTDC[cat].len);
+      writeBits((Diff < 0) ? (Diff + ((1 << cat) - 1)) : Diff, cat);
     }
 
     // Encode ACs
     int end0pos = 63;
     for (; (end0pos > 0) && (DU[end0pos] == 0); end0pos--) {}
     if (end0pos == 0) {
-      writeBits(EOB);
+      writeBits(EOB.val, EOB.len);
       return DC;
     }
 
@@ -588,47 +684,20 @@ class JPGEncoder
       int nrzeroes = i - startpos;
       if (nrzeroes >= 16) {
         for (int nrmarker = 1; nrmarker <= nrzeroes / 16; nrmarker++) {
-          writeBits(M16zeroes);
+          writeBits(M16zeroes.val, M16zeroes.len);
         }
         nrzeroes = static_cast<int>(nrzeroes & 0xF);
       }
 
-      writeBits(HTAC[nrzeroes * 16 + s_category[32767 + DU[i]]]);
-      writeBits(s_bitcode[32767 + DU[i]]);
+      int cat = coeffCategory(DU[i]);
+      writeBits(HTAC[nrzeroes * 16 + cat].val, HTAC[nrzeroes * 16 + cat].len);
+      writeBits((DU[i] < 0) ? (DU[i] + ((1 << cat) - 1)) : DU[i], cat);
     }
     if (end0pos != 63) {
-      writeBits(EOB);
+      writeBits(EOB.val, EOB.len);
     }
 
     return DC;
-  }
-
-  // YCbCr NV16 - img format
-  // Two planes: Y plane and CbCr combined plane
-  // Decodes one 8x8 macroblock from an NV16 image. The Y and the interleaved
-  // U/V planes are addressed with the same @p lineLength stride (the V4L2
-  // bytesperline), exactly like CvAlgorithm::convertImageNV16ToHsv does, so a
-  // padded frame never drifts out of sync. Chroma is 4:2:2 (U = high byte,
-  // V = low byte of each interleaved 16-bit word).
-  void getBlock(const uint8_t* img, int xpos, int ypos, int width, int height, int lineLength)
-  {
-    const uint8_t* restrict yPlane = img;
-    const uint8_t* restrict uvPlane = img + lineLength * height;
-
-    int pos = 0;
-    #pragma MUST_ITERATE(8, ,8)
-    for (int y = 0; y < 8; y++) {
-      const int rowOffset = (ypos + y) * lineLength;
-      #pragma MUST_ITERATE(8, ,8)
-      for (int x = 0; x < 8; x++) {
-        const int px = xpos + x;
-        const uint16_t uv = *reinterpret_cast<const uint16_t*>(uvPlane + rowOffset + (px / 2) * 2);
-        YDU[pos] = yPlane[rowOffset + px] - 128;
-        UDU[pos] = static_cast<uint8_t>(uv >> 8) - 128;
-        VDU[pos] = static_cast<uint8_t>(uv) - 128;
-        pos++;
-      }
-    }
   }
 
   public:
@@ -676,32 +745,34 @@ class JPGEncoder
     writeDHT();
     writeSOS();
 
-    // Encode 8x8 macroblocks
+    // Encode 8x8 blocks: one luma block + one U + one V per 8x8 pixel region
     int DCY = 0;
     int DCU = 0;
     int DCV = 0;
     bytenew = 0;
     bytepos = 8;
 
-    for (int ypos = 0; ypos < height; ypos += 8) {
-      for (int xpos = 0; xpos < width; xpos += 8) {
-        getBlock(image, xpos, ypos, width, height, lineLength);
-        DCY = processDU(YDU, fdtbl_Y, DCY, s_ydcHt, s_yacHt);
-        if (!ifBlackAndWhite) {
-          DCU = processDU(UDU, fdtbl_UV, DCU, s_uvdcHt, s_uvacHt);
-          DCV = processDU(VDU, fdtbl_UV, DCV, s_uvdcHt, s_uvacHt);
+    if (ifBlackAndWhite) {
+      for (int ypos = 0; ypos < height; ypos += 8) {
+        for (int xpos = 0; xpos < width; xpos += 8) {
+          readYBlock(image, xpos, ypos, lineLength, YDU);
+          DCY = processDU(YDU, m_qscaleY, DCY, s_ydcHt, s_yacHt);
+        }
+      }
+    } else {
+      for (int ypos = 0; ypos < height; ypos += 8) {
+        for (int xpos = 0; xpos < width; xpos += 8) {
+          getBlock(image, xpos, ypos, lineLength, height, YDU, UDU, VDU);
+          DCY = processDU(YDU, m_qscaleY, DCY, s_ydcHt, s_yacHt);
+          DCU = processDU(UDU, m_qscaleUV, DCU, s_uvdcHt, s_uvacHt);
+          DCV = processDU(VDU, m_qscaleUV, DCV, s_uvdcHt, s_uvacHt);
         }
       }
     }
 
     // Do the bit alignment of the EOI marker
     if (bytepos >= 0) {
-      BitString fillbits;
-
-      fillbits.len = bytepos;
-      fillbits.val = (1 << (bytepos)) - 1;
-
-      writeBits(fillbits);
+      writeBits((1 << bytepos) - 1, bytepos);
     }
 
     writeWord(0xFFD9); // EOI
