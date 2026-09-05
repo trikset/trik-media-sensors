@@ -23,8 +23,8 @@
 #include <trik/sensors/cv_algorithms.h>
 #include <trik/sensors/msg.h>
 
+int8_t __attribute__((aligned(128))) in_buff[TRIK_INPUT_TOTAL][BUFFER_SIZE];
 int8_t __attribute__((aligned(128))) out_buff[BUFFER_SIZE];
-int8_t __attribute__((aligned(128))) in_buff[BUFFER_SIZE];
 
 typedef struct {
   UInt16 hostProcId;
@@ -50,6 +50,8 @@ enum trik_cv_algorithm trik_cv_algorithm_from_cmd(enum trik_cmd cmd) {
     return TRIK_CV_ALGORITHM_OBJECT_SENSOR;
   else if (cmd == TRIK_CMD_MXN_SENSOR)
     return TRIK_CV_ALGORITHM_MXN_SENSOR;
+  else if (cmd == TRIK_CMD_JPEG_ENCODER)
+    return TRIK_CV_ALGORITHM_JPEG_ENCODER;
   else
     return TRIK_CV_ALGORITHM_NONE;
 }
@@ -118,7 +120,7 @@ static int trik_res_msg(struct trik_msg* msg) {
 static int trik_handle_init(struct trik_msg* req) {
   struct trik_res_init_msg* res = (struct trik_res_init_msg*) req;
 
-  res->dsp_in_buffer = in_buffer.start;
+  res->dsp_in_buffer = in_buff;
   res->dsp_out_buffer = out_buffer.start;
 
   if (trik_res_msg((struct trik_msg*) res) < 0) {
@@ -150,6 +152,15 @@ static int trik_handle_sensor(struct trik_req_cv_algorithm_msg* req) {
 static int trik_handle_step(struct trik_msg* req) {
   struct trik_res_step_msg* res = (struct trik_res_step_msg*) req;
 
+  // The VPIF DMA engine filled the frame directly into one of the input
+  // buffers (V4L2 USERPTR). Select it by the flat index carried in STEP.
+  if (res->buffer_idx >= TRIK_INPUT_TOTAL) {
+    Log_print1(Diags_INFO, "trik_handle_step(): invalid buffer index %u", res->buffer_idx);
+    return -1;
+  }
+  in_buffer.start = in_buff[res->buffer_idx];
+  in_buffer.length = BUFFER_SIZE;
+
   if (!trik_run_cv_algorithm(cv_algorithm, in_buffer, out_buffer, res->in_args, &(res->out_args))) {
     Log_print0(Diags_INFO, "trik_handle_step(): unable to run cv algorithm");
     return -1;
@@ -169,8 +180,6 @@ Int trik_start_dsp_server(Void) {
 
   Log_print0(Diags_ENTRY | Diags_INFO, "--> trik_start_dsp_server");
 
-  in_buffer.start = (void*) &in_buff;
-  in_buffer.length = BUFFER_SIZE;
   out_buffer.start = (void*) &out_buff;
   out_buffer.length = BUFFER_SIZE;
 

@@ -21,5 +21,5 @@ The modified version of this file with the required changes can be found in `ipc
 
 Example if using our trik-distro (yocto) `KERNEL_INSTALL=/path/to/trik-distro/tmp-glibc/work-shared/trikboard/kernel-build-artifacts`
 
-It'll build ARM and DSP part of the software both for debug and release in `./arm/bin` and `./dsp/bin` directories.
+It'll build the DSP part of the software both for debug and release in the `./dsp/bin` directory.
 
