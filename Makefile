@@ -30,7 +30,7 @@
 #  EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #
 
-PROCLIST = arm dsp
+PROCLIST = dsp
 
 EXBASE = .
 include $(EXBASE)/products.mak
